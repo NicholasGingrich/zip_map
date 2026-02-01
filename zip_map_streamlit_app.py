@@ -49,9 +49,7 @@ with st.expander("Advanced Options"):
     st.divider()
 
     with st.expander("Select Colors"):
-        st.write(
-            "Click on a square to change the color. Colors will be included in the map from left to right based on the required number of colors to account for all values."
-        )
+        st.write("Click on a square to change the color. Colors will be included in the map from left to right based on the required number of colors to account for all values.")
         cols = st.columns(len(map_colors))
 
         selected_colors = []
@@ -66,156 +64,154 @@ generate_button = st.button("Generate Map")
 # Progress placeholders
 # -----------------------------
 progress_bar = st.empty()
-status_text = st.empty()
 
 if generate_button:
-    # -----------------------------
-    # Check if file uploaded
-    # -----------------------------
-    if zip_col_label is None:
-        st.error("Please enter a value for 'Zip Column Label'")
-        st.stop()
+    with st.status("Initializing...", expanded=True) as status_spinner:
+        # -----------------------------
+        # Check if file uploaded
+        # -----------------------------
+        if zip_col_label is None:
+            st.error("Please enter a value for 'Zip Column Label'")
+            st.stop()
 
-    if zip_col_label is None:
-        st.error("Please enter a value for 'Value Column Label'")
-        st.stop()
+        if zip_col_label is None:
+            st.error("Please enter a value for 'Value Column Label'")
+            st.stop()
 
-    if color_data_file is None:
-        st.error("Please upload an Excel file.")
-        st.stop()
+        if color_data_file is None:
+            st.error("Please upload an Excel file.")
+            st.stop()
 
-    # Immediately show progress bar and status
-    progress_bar = st.progress(0.01)
-    status_text.text("Initializing…")
-    time.sleep(0)  # force UI flush
+        # Immediately show progress bar and status
+        progress_bar = st.progress(0.01)
 
-    # -----------------------------
-    # Shared state
-    # -----------------------------
-    result = {"fig": None}
-    map_done_event = threading.Event()
-    conversion_event = threading.Event()
-    error_event = threading.Event()
-    error_message = {"msg": ""}
+        time.sleep(0)  # force UI flush
 
-    # -----------------------------
-    # Worker thread: read Excel, validate, generate map
-    # -----------------------------
-    def map_worker():
-        try:
-            # Read Excel
-            data_df = pd.read_excel(color_data_file)
+        # -----------------------------
+        # Shared state
+        # -----------------------------
+        result = {"fig": None}
+        map_done_event = threading.Event()
+        conversion_event = threading.Event()
+        error_event = threading.Event()
+        error_message = {"msg": ""}
 
-            # Validation
-            if zip_col_label not in data_df.columns:
-                error_message["msg"] = f"ZIP column '{zip_col_label}' not found."
+        # -----------------------------
+        # Worker thread: read Excel, validate, generate map
+        # -----------------------------
+        def map_worker():
+            try:
+                # Read Excel
+                data_df = pd.read_excel(color_data_file)
+
+                # Validation
+                if zip_col_label not in data_df.columns:
+                    error_message["msg"] = f"ZIP column '{zip_col_label}' not found."
+                    error_event.set()
+                    return
+                if value_col_label not in data_df.columns:
+                    error_message["msg"] = f"Value column '{value_col_label}' not found."
+                    error_event.set()
+                    return
+
+                # Generate map
+                fig, unassigned_df = generate_map(
+                    data_df=data_df,
+                    auto_fill_unassigned=assign_unassigned_zips,
+                    zip_col=zip_col_label,
+                    map_colors=selected_colors,
+                    value_col=value_col_label,
+                    map_title=map_title,
+                )
+                result["fig"] = fig
+                result["unassigned_df"] = unassigned_df
+                map_done_event.set()
+
+                # Phase 2 - Conversion
+                fig_bytes = fig_to_png_bytes(fig)
+                result["fig_bytes"] = fig_bytes
+                conversion_event.set()
+
+            except Exception as e:
+                error_message["msg"] = str(e)
                 error_event.set()
-                return
-            if value_col_label not in data_df.columns:
-                error_message["msg"] = f"Value column '{value_col_label}' not found."
-                error_event.set()
-                return
 
-            # Generate map
-            fig, unassigned_df = generate_map(
-                data_df=data_df,
-                auto_fill_unassigned=assign_unassigned_zips,
-                zip_col=zip_col_label,
-                map_colors=selected_colors,
-                value_col=value_col_label,
-                map_title=map_title,
-            )
-            result["fig"] = fig
-            result["unassigned_df"] = unassigned_df
-            map_done_event.set()
+        worker_thread = threading.Thread(target=map_worker, daemon=True)
+        worker_thread.start()
 
-            # Phase 2 - Conversion
-            fig_bytes = fig_to_png_bytes(fig)
-            result["fig_bytes"] = fig_bytes
-            conversion_event.set()
+        # -----------------------------
+        # Stage 1: Generating Map (118s max)
+        # -----------------------------
+        stage1_duration = 420
+        stage1_start = time.time()
 
-        except Exception as e:
-            error_message["msg"] = str(e)
-            error_event.set()
+        status_spinner.update(label="Generating Map, this may take a while...")
+        while not map_done_event.is_set() and not error_event.is_set():
+            elapsed = time.time() - stage1_start
+            fraction = min(elapsed / stage1_duration, 0.72)
+            progress_bar.progress(fraction)
+            time.sleep(0.5)
 
-    worker_thread = threading.Thread(target=map_worker, daemon=True)
-    worker_thread.start()
+        # Ensure phase 1 visually completes
+        progress_bar.progress(0.72)
 
-    # -----------------------------
-    # Stage 1: Generating Map (118s max)
-    # -----------------------------
-    stage1_duration = 420
-    stage1_start = time.time()
+        # -----------------------------
+        # Stage 2: Converting Map
+        # -----------------------------
+        stage2_duration = 124
+        stage2_start = time.time()
+        status_spinner.update(label="Converting Map to Downloadable Form")
+        while not error_event.is_set() and not conversion_event.is_set():
+            elapsed = time.time() - stage2_start
+            fraction = 0.72 + (elapsed / stage2_duration) * 0.05
+            progress_bar.progress(min(fraction, 0.99))
+            time.sleep(0.3)
 
-    status_text.text("Generating Map…")
-    while not map_done_event.is_set() and not error_event.is_set():
-        elapsed = time.time() - stage1_start
-        fraction = min(elapsed / stage1_duration, 0.72)
-        progress_bar.progress(fraction)
-        time.sleep(0.5)
+        # -----------------------------
+        # Finalize
+        # -----------------------------
+        @st.fragment()
+        def plot_graph():
+            fig_placeholder = st.empty()
 
-    # Ensure phase 1 visually completes
-    progress_bar.progress(0.72)
+            if error_event.is_set():
+                st.error(error_message["msg"])
+            else:
+                fig = result["fig"]
 
-    # -----------------------------
-    # Stage 2: Converting Map (12s)
-    # -----------------------------
-    stage2_duration = 124
-    stage2_start = time.time()
-    status_text.text("Converting Map to Downloadable Form…")
-    while not error_event.is_set() and not conversion_event.is_set():
-        elapsed = time.time() - stage2_start
-        fraction = 0.72 + (elapsed / stage2_duration) * 0.05
-        progress_bar.progress(min(fraction, 0.99))
-        time.sleep(0.3)
+                if fig is not None:
+                    fig_placeholder.pyplot(fig)
+                    progress_bar.progress(1.0)
+                    status_spinner.update(label="Map Generation Complete")
+                    progress_bar.empty()
+                else:
+                    st.error("Map generation failed.")
 
-    # -----------------------------
-    # Finalize
-    # -----------------------------
-    @st.fragment()
-    def plot_graph():
-        fig_placeholder = st.empty()
+        @st.fragment()
+        def show_download_button():
+            fig_bytes = result["fig_bytes"]
+            download_placeholder = st.empty()
 
-        if error_event.is_set():
-            st.error(error_message["msg"])
-        else:
-            fig = result["fig"]
-
-            if fig is not None:
-                fig_placeholder.pyplot(fig)
-                progress_bar.progress(1.0)
-
-                status_text.text("Done")
-                status_text.empty()
-                progress_bar.empty()
+            if fig_bytes is not None:
+                download_placeholder.download_button(
+                    label="Download map as PNG",
+                    data=fig_bytes,
+                    file_name="zip_coverage_map.png",
+                    mime="image/png",
+                )
             else:
                 st.error("Map generation failed.")
 
-    @st.fragment()
-    def show_download_button():
-        fig_bytes = result["fig_bytes"]
-        download_placeholder = st.empty()
+        @st.fragment()
+        def show_unassigned_df():
+            unassigned_df = result["unassigned_df"]
+            if unassigned_df is not None:
+                # Add in pannel with unassigned info
+                with st.expander("Click to View Unassigned Zipcodes"):
+                    st.write(unassigned_df)
+            else:
+                st.error("Map generation failed.")
 
-        if fig_bytes is not None:
-            download_placeholder.download_button(
-                label="Download map as PNG",
-                data=fig_bytes,
-                file_name="zip_coverage_map.png",
-                mime="image/png",
-            )
-        else:
-            st.error("Map generation failed.")
-
-    @st.fragment()
-    def show_unassigned_df():
-        unassigned_df = result["unassigned_df"]
-        if unassigned_df is not None:
-            # Add in pannel with unassigned info
-            with st.expander("Click to View Unassigned Zipcodes"):
-                st.write(unassigned_df)
-        else:
-            st.error("Map generation failed.")
-
-    plot_graph()
-    show_download_button()
-    show_unassigned_df()
+        plot_graph()
+        show_download_button()
+        show_unassigned_df()
