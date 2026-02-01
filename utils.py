@@ -5,7 +5,6 @@ from shapely import LineString
 from shapely.affinity import scale, translate
 from shapely.geometry import box
 import json
-from matplotlib.colors import ListedColormap
 
 
 def find_state_loc(state_abbr: str, state_locs):
@@ -76,9 +75,7 @@ def generate_map(
     if auto_fill_unassigned:
         gdf["ZIP_INT"] = gdf["ZIP_CODE"].astype(int)
 
-        assigned_lookup = (
-            gdf.dropna(subset=[value_col]).set_index("ZIP_INT")[value_col].to_dict()
-        )
+        assigned_lookup = gdf.dropna(subset=[value_col]).set_index("ZIP_INT")[value_col].to_dict()
 
         def find_nearest_value(zip_int, lookup, max_radius=500):
             for d in range(1, max_radius + 1):
@@ -88,51 +85,24 @@ def generate_map(
                     return lookup[zip_int + d]
             return "unassigned"
 
-        gdf.loc[originally_unassigned_mask, value_col] = gdf.loc[
-            originally_unassigned_mask, "ZIP_INT"
-        ].apply(lambda z: find_nearest_value(z, assigned_lookup))
+        gdf.loc[originally_unassigned_mask, value_col] = gdf.loc[originally_unassigned_mask, "ZIP_INT"].apply(lambda z: find_nearest_value(z, assigned_lookup))
 
         gdf.drop(columns="ZIP_INT", inplace=True)
 
     # -----------------------------
     # Build unassigned report (ALWAYS)
     # -----------------------------
-    unassigned_df = (
-        gdf.loc[originally_unassigned_mask, ["ZIP_CODE", value_col]]
-        .fillna({value_col: "unassigned"})
-        .rename(columns={value_col: "assigned_value"})
-        .reset_index(drop=True)
-    )
+    unassigned_df = gdf.loc[originally_unassigned_mask, ["ZIP_CODE", value_col]].fillna({value_col: "unassigned"}).rename(columns={value_col: "assigned_value"}).reset_index(drop=True)
 
     # -----------------------------
     # Filter to CONUS + AK + HI + PR
     # -----------------------------
     bounds = gdf.geometry.bounds
     gdf = gdf[
-        (
-            (bounds.minx > -130)
-            & (bounds.maxx < -60)
-            & (bounds.miny > 24)
-            & (bounds.maxy < 50)
-        )
-        | (
-            (bounds.minx > -170)
-            & (bounds.maxx < -130)
-            & (bounds.miny > 50)
-            & (bounds.maxy < 72)
-        )
-        | (
-            (bounds.minx > -161)
-            & (bounds.maxx < -154)
-            & (bounds.miny > 18)
-            & (bounds.maxy < 23)
-        )
-        | (
-            (bounds.minx > -68)
-            & (bounds.maxx < -65)
-            & (bounds.miny > 17)
-            & (bounds.maxy < 19.5)
-        )
+        ((bounds.minx > -130) & (bounds.maxx < -60) & (bounds.miny > 24) & (bounds.maxy < 50))
+        | ((bounds.minx > -170) & (bounds.maxx < -130) & (bounds.miny > 50) & (bounds.maxy < 72))
+        | ((bounds.minx > -161) & (bounds.maxx < -154) & (bounds.miny > 18) & (bounds.maxy < 23))
+        | ((bounds.minx > -68) & (bounds.maxx < -65) & (bounds.miny > 17) & (bounds.maxy < 19.5))
     ].copy()
 
     # -----------------------------
@@ -301,12 +271,8 @@ def generate_map(
     states.boundary.plot(ax=ax, linewidth=0.5, edgecolor="black", zorder=5)
     leader_lines_gdf.plot(ax=ax, color="black", linewidth=0.8, zorder=6)
 
-    states["label_x"] = states["STATE_ABBR"].apply(
-        lambda s: find_state_loc(s, state_locs)["label_x"]
-    )
-    states["label_y"] = states["STATE_ABBR"].apply(
-        lambda s: find_state_loc(s, state_locs)["label_y"]
-    )
+    states["label_x"] = states["STATE_ABBR"].apply(lambda s: find_state_loc(s, state_locs)["label_x"])
+    states["label_y"] = states["STATE_ABBR"].apply(lambda s: find_state_loc(s, state_locs)["label_y"])
 
     for _, row in states.iterrows():
         ax.text(
