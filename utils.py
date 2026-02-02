@@ -4,8 +4,10 @@ import matplotlib.pyplot as plt
 from shapely import LineString
 from shapely.affinity import scale, translate
 from shapely.geometry import box
+from matplotlib.patches import Patch
 import json
 import streamlit as st
+from memory_profiler import profile
 
 
 def find_state_loc(state_abbr: str, state_locs):
@@ -15,16 +17,10 @@ def find_state_loc(state_abbr: str, state_locs):
     return None
 
 
-def get_state_locs():
-    with open("./state_abbv_offsets.json", "r") as f:
+@st.cache_data(show_spinner=False)
+def load_state_locs(path="./state_abbv_offsets.json"):
+    with open(path, "r") as f:
         return json.load(f)
-
-
-def fig_to_png_bytes(fig):
-    buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
-    buf.seek(0)
-    return buf
 
 
 @st.cache_data(show_spinner=False)
@@ -35,17 +31,20 @@ def load_zip_gdf(path="./data/zip_code_boundaries.shp"):
 
 @st.cache_data(show_spinner=False)
 def load_state_gdf(path="./data/state_boundaries.shp"):
-    """Load state boundaries shapefile (filtered for US)."""
+    """Load US state boundaries shapefile, filtered."""
     gdf = gpd.read_file(path)
-    gdf = gdf[~gdf["STATE_ABBR"].isin(["VI", "GU", "MP", "AS"])]
-    return gdf
+    return gdf[~gdf["STATE_ABBR"].isin(["VI", "GU", "MP", "AS"])]
 
 
-# -----------------------------
-# Generate Map
-# -----------------------------
+@st.cache_data(show_spinner=False)
+def fig_to_png_bytes(_fig):
+    buf = BytesIO()
+    _fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+    buf.seek(0)
+    return buf
 
 
+@profile
 def generate_map(
     data_df,
     zip_col,
@@ -54,46 +53,24 @@ def generate_map(
     auto_fill_unassigned=False,
     map_title=None,
 ):
-    from matplotlib.patches import Patch
+    # Load static data
+    state_locs = load_state_locs()
+    zip_gdf = load_zip_gdf()
+    states = load_state_gdf()
 
-    state_locs = get_state_locs()
-
-    # -----------------------------
     # Normalize ZIPs
-    # -----------------------------
-    st.write("Normalizing Zips")
     data_df = data_df.copy()
     data_df[zip_col] = data_df[zip_col].astype(str).str.zfill(5)
 
-    # -----------------------------
-    # Load ZIP boundaries
-    # -----------------------------
-    st.write("Loading zip boundaries")
-    zip_gdf = load_zip_gdf()
-
-    # -----------------------------
     # Merge data → ZIP geometries
-    # -----------------------------
-    st.write("Mergins data and zip boundaries")
-    gdf = zip_gdf.merge(
-        data_df,
-        left_on="ZIP_CODE",
-        right_on=zip_col,
-        how="left",
-    )
+    gdf = zip_gdf.merge(data_df, left_on="ZIP_CODE", right_on=zip_col, how="left")
 
-    # -----------------------------
     # Track originally unassigned ZIPs
-    # -----------------------------
     originally_unassigned_mask = gdf[value_col].isna()
 
-    # -----------------------------
     # Auto-fill unassigned ZIPs (optional)
-    # -----------------------------
-    st.write("Autofilling unassinged zips")
     if auto_fill_unassigned:
         gdf["ZIP_INT"] = gdf["ZIP_CODE"].astype(int)
-
         assigned_lookup = gdf.dropna(subset=[value_col]).set_index("ZIP_INT")[value_col].to_dict()
 
         def find_nearest_value(zip_int, lookup, max_radius=500):
@@ -105,18 +82,12 @@ def generate_map(
             return "unassigned"
 
         gdf.loc[originally_unassigned_mask, value_col] = gdf.loc[originally_unassigned_mask, "ZIP_INT"].apply(lambda z: find_nearest_value(z, assigned_lookup))
-
         gdf.drop(columns="ZIP_INT", inplace=True)
 
-    # -----------------------------
-    # Build unassigned report (ALWAYS)
-    # -----------------------------
-    st.write("binding unassigned zips")
+    # Build unassigned report
     unassigned_df = gdf.loc[originally_unassigned_mask, ["ZIP_CODE", value_col]].fillna({value_col: "unassigned"}).rename(columns={value_col: "assigned_value"}).reset_index(drop=True)
 
-    # -----------------------------
     # Filter to CONUS + AK + HI + PR
-    # -----------------------------
     bounds = gdf.geometry.bounds
     gdf = gdf[
         ((bounds.minx > -130) & (bounds.maxx < -60) & (bounds.miny > 24) & (bounds.maxy < 50))
@@ -125,38 +96,27 @@ def generate_map(
         | ((bounds.minx > -68) & (bounds.maxx < -65) & (bounds.miny > 17) & (bounds.maxy < 19.5))
     ].copy()
 
-    # -----------------------------
     # Transform ZIP geometries
-    # -----------------------------
-    st.write("Transforming zip boundaries")
     for i, row in gdf.iterrows():
         minx, miny, maxx, maxy = row.geometry.bounds
+        geom = row.geometry
 
         if -170 < minx < -130 and 50 < miny < 72:  # Alaska
-            geom = scale(row.geometry, 0.45, 0.75, origin=(0, 0))
+            geom = scale(geom, 0.45, 0.75, origin=(0, 0))
             geom = translate(geom, -55, -23)
         elif -68 < minx < -65 and maxy < 30:  # Puerto Rico
-            geom = scale(row.geometry, 3.75, 3.75, origin=(0, 0))
+            geom = scale(geom, 3.75, 3.75, origin=(0, 0))
             geom = translate(geom, 171.5, -47)
         elif -172 < minx < -154 and miny < 50:  # Hawaii
-            geom = scale(row.geometry, 2.25, 2.25, origin=(0, 0))
+            geom = scale(geom, 2.25, 2.25, origin=(0, 0))
             geom = translate(geom, 247, -24)
-        else:
-            continue
-
         gdf.at[i, "geometry"] = geom
 
-    # -----------------------------
-    # Load & transform state boundaries
-    # -----------------------------
-    st.write("Loading and transfroming state boundaries")
-    states = load_state_gdf()
+    # Transform state geometries
     states = states.to_crs(gdf.crs)
-
     for i, row in states.iterrows():
         abbr = row["STATE_ABBR"]
         geom = row.geometry
-
         if abbr == "AK":
             geom = scale(geom, 0.45, 0.75, origin=(0, 0))
             geom = translate(geom, -55, -23)
@@ -166,21 +126,14 @@ def generate_map(
         elif abbr == "PR":
             geom = scale(geom, 3.75, 3.75, origin=(0, 0))
             geom = translate(geom, 171.5, -47)
-
         states.at[i, "geometry"] = geom
 
-    # -----------------------------
-    # Clip
-    # -----------------------------
-    st.write("Clipped box")
+    # Clip to plotting box
     clip_box = box(-130, 18, -60, 55)
     gdf = gpd.clip(gdf, clip_box)
     states = gpd.clip(states, clip_box)
 
-    # -----------------------------
     # Leader lines
-    # -----------------------------
-    st.write("Plotting leader lines")
     leader_lines = []
     SMALL_STATES = {
         "DC": {"x": -0.3, "y": 0.2},
@@ -189,94 +142,38 @@ def generate_map(
         "NJ": {"x": -0.3, "y": 0},
         "RI": {"x": 0, "y": 0.2},
     }
-
     for _, row in states.iterrows():
         abbr = row["STATE_ABBR"]
         if abbr not in SMALL_STATES:
             continue
-
         loc = find_state_loc(abbr, state_locs)
         anchor = row.geometry.representative_point()
         offset = SMALL_STATES[abbr]
-
         leader_lines.append(
             {
                 "STATE_ABBR": abbr,
-                "geometry": LineString(
-                    [
-                        (anchor.x, anchor.y),
-                        (
-                            loc["label_x"] + offset["x"],
-                            loc["label_y"] + offset["y"],
-                        ),
-                    ]
-                ),
+                "geometry": LineString([(anchor.x, anchor.y), (loc["label_x"] + offset["x"], loc["label_y"] + offset["y"])]),
             }
         )
-
     leader_lines_gdf = gpd.GeoDataFrame(leader_lines, crs=states.crs)
 
-    # -----------------------------
-    # Plot (COLOR + HATCHING)
-    # -----------------------------
-    st.write("Plotting colors and hatches")
+    # Plotting
     fig, ax = plt.subplots(figsize=(26, 31), dpi=120)
 
     unique_vals = sorted(gdf[value_col].dropna().unique())
     base_colors = map_colors
-    hatches = [
-        "",
-        "//",
-        "..",
-        "xx",
-        "\\\\",
-    ]
+    hatches = ["", "//", "..", "xx", "\\\\"]
+    style_map = {val: (base_colors[i % len(base_colors)], hatches[i // len(base_colors)]) for i, val in enumerate(unique_vals)}
 
-    style_map = {}
-    for i, val in enumerate(unique_vals):
-        color = base_colors[i % len(base_colors)]
-        hatch = hatches[i // len(base_colors)]
-        style_map[val] = (color, hatch)
-
-    # Draw ZIPs group-by-group
     for val, (color, hatch) in style_map.items():
-        if hatch == "..":
-            edge_color = "white"
-        else:
-            edge_color = "none"
+        edge_color = "white" if hatch == ".." else "none"
+        gdf[gdf[value_col] == val].plot(ax=ax, facecolor=color, hatch=hatch, edgecolor=edge_color, linewidth=0, antialiased=False, rasterized=True)
 
-        gdf[gdf[value_col] == val].plot(
-            ax=ax,
-            facecolor=color,
-            hatch=hatch,
-            edgecolor=edge_color,
-            linewidth=0,
-            antialiased=False,
-            rasterized=True,
-        )
-
-    # -----------------------------
-    # Custom legend
-    # -----------------------------
-    st.write("Creating custom legend")
+    # Legend
     legend_handles = []
-
     for val, (color, hatch) in style_map.items():
-        if hatch == "..":
-            edge_color = "white"
-        else:
-            edge_color = "black"
-
-        legend_handles.append(
-            Patch(
-                facecolor=color,
-                hatch=hatch,
-                edgecolor=edge_color,
-                linewidth=0,
-                label=val,
-            )
-        )
-
+        edge_color = "white" if hatch == ".." else "black"
+        legend_handles.append(Patch(facecolor=color, hatch=hatch, edgecolor=edge_color, linewidth=0, label=val))
     ax.legend(
         handles=legend_handles,
         loc="center right",
@@ -284,38 +181,22 @@ def generate_map(
         title_fontsize=18,
         fontsize=16,
         frameon=True,
-        handlelength=2.8,  # width of color box
-        handleheight=1.8,  # height of color box
-        labelspacing=0.5,  # vertical spacing between entries
-        borderpad=1.2,  # padding inside legend box
+        handlelength=2.8,
+        handleheight=1.8,
+        labelspacing=0.5,
+        borderpad=1.2,
     )
 
-    # -----------------------------
     # Overlays
-    # -----------------------------
-    st.write("Adding overlays")
     states.boundary.plot(ax=ax, linewidth=0.5, edgecolor="black", zorder=5)
     leader_lines_gdf.plot(ax=ax, color="black", linewidth=0.8, zorder=6)
 
     states["label_x"] = states["STATE_ABBR"].apply(lambda s: find_state_loc(s, state_locs)["label_x"])
     states["label_y"] = states["STATE_ABBR"].apply(lambda s: find_state_loc(s, state_locs)["label_y"])
-
     for _, row in states.iterrows():
-        ax.text(
-            row.label_x,
-            row.label_y,
-            row["STATE_ABBR"],
-            fontsize=10,
-            fontweight="bold",
-            ha="center",
-            va="center",
-            zorder=6,
-        )
+        ax.text(row.label_x, row.label_y, row["STATE_ABBR"], fontsize=10, fontweight="bold", ha="center", va="center", zorder=6)
 
-    # -----------------------------
     # Final styling
-    # -----------------------------
-    st.write("Adding final styling")
     ax.set_axis_off()
     ax.set_aspect("equal")
     ax.set_title(map_title, fontsize=20, pad=20)
