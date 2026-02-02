@@ -5,6 +5,7 @@ from shapely import LineString
 from shapely.affinity import scale, translate
 from shapely.geometry import box
 import json
+import streamlit as st
 
 
 def find_state_loc(state_abbr: str, state_locs):
@@ -24,6 +25,20 @@ def fig_to_png_bytes(fig):
     fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
     buf.seek(0)
     return buf
+
+
+@st.cache_data(show_spinner=False)
+def load_zip_gdf(path="./data/zip_code_boundaries.shp"):
+    """Load ZIP code boundaries shapefile."""
+    return gpd.read_file(path)
+
+
+@st.cache_data(show_spinner=False)
+def load_state_gdf(path="./data/state_boundaries.shp"):
+    """Load state boundaries shapefile (filtered for US)."""
+    gdf = gpd.read_file(path)
+    gdf = gdf[~gdf["STATE_ABBR"].isin(["VI", "GU", "MP", "AS"])]
+    return gdf
 
 
 # -----------------------------
@@ -52,7 +67,7 @@ def generate_map(
     # -----------------------------
     # Load ZIP boundaries
     # -----------------------------
-    zip_gdf = gpd.read_file("./data/zip_code_boundaries.shp")
+    zip_gdf = load_zip_gdf()
 
     # -----------------------------
     # Merge data → ZIP geometries
@@ -128,8 +143,7 @@ def generate_map(
     # -----------------------------
     # Load & transform state boundaries
     # -----------------------------
-    states = gpd.read_file("./data/state_boundaries.shp")
-    states = states[~states["STATE_ABBR"].isin(["VI", "GU", "MP", "AS"])]
+    states = load_state_gdf()
     states = states.to_crs(gdf.crs)
 
     for i, row in states.iterrows():
