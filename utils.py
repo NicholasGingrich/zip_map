@@ -61,17 +61,20 @@ def generate_map(
     # -----------------------------
     # Normalize ZIPs
     # -----------------------------
+    st.write("Normalizing Zips")
     data_df = data_df.copy()
     data_df[zip_col] = data_df[zip_col].astype(str).str.zfill(5)
 
     # -----------------------------
     # Load ZIP boundaries
     # -----------------------------
+    st.write("Loading zip boundaries")
     zip_gdf = load_zip_gdf()
 
     # -----------------------------
     # Merge data → ZIP geometries
     # -----------------------------
+    st.write("Mergins data and zip boundaries")
     gdf = zip_gdf.merge(
         data_df,
         left_on="ZIP_CODE",
@@ -87,6 +90,7 @@ def generate_map(
     # -----------------------------
     # Auto-fill unassigned ZIPs (optional)
     # -----------------------------
+    st.write("Autofilling unassinged zips")
     if auto_fill_unassigned:
         gdf["ZIP_INT"] = gdf["ZIP_CODE"].astype(int)
 
@@ -107,6 +111,7 @@ def generate_map(
     # -----------------------------
     # Build unassigned report (ALWAYS)
     # -----------------------------
+    st.write("binding unassigned zips")
     unassigned_df = gdf.loc[originally_unassigned_mask, ["ZIP_CODE", value_col]].fillna({value_col: "unassigned"}).rename(columns={value_col: "assigned_value"}).reset_index(drop=True)
 
     # -----------------------------
@@ -123,6 +128,7 @@ def generate_map(
     # -----------------------------
     # Transform ZIP geometries
     # -----------------------------
+    st.write("Transforming zip boundaries")
     for i, row in gdf.iterrows():
         minx, miny, maxx, maxy = row.geometry.bounds
 
@@ -143,6 +149,7 @@ def generate_map(
     # -----------------------------
     # Load & transform state boundaries
     # -----------------------------
+    st.write("Loading and transfroming state boundaries")
     states = load_state_gdf()
     states = states.to_crs(gdf.crs)
 
@@ -165,6 +172,7 @@ def generate_map(
     # -----------------------------
     # Clip
     # -----------------------------
+    st.write("Clipped box")
     clip_box = box(-130, 18, -60, 55)
     gdf = gpd.clip(gdf, clip_box)
     states = gpd.clip(states, clip_box)
@@ -172,6 +180,7 @@ def generate_map(
     # -----------------------------
     # Leader lines
     # -----------------------------
+    st.write("Plotting leader lines")
     leader_lines = []
     SMALL_STATES = {
         "DC": {"x": -0.3, "y": 0.2},
@@ -210,6 +219,7 @@ def generate_map(
     # -----------------------------
     # Plot (COLOR + HATCHING)
     # -----------------------------
+    st.write("Plotting colors and hatches")
     fig, ax = plt.subplots(figsize=(26, 31), dpi=120)
 
     unique_vals = sorted(gdf[value_col].dropna().unique())
@@ -248,6 +258,7 @@ def generate_map(
     # -----------------------------
     # Custom legend
     # -----------------------------
+    st.write("Creating custom legend")
     legend_handles = []
 
     for val, (color, hatch) in style_map.items():
@@ -282,6 +293,7 @@ def generate_map(
     # -----------------------------
     # Overlays
     # -----------------------------
+    st.write("Adding overlays")
     states.boundary.plot(ax=ax, linewidth=0.5, edgecolor="black", zorder=5)
     leader_lines_gdf.plot(ax=ax, color="black", linewidth=0.8, zorder=6)
 
@@ -303,6 +315,7 @@ def generate_map(
     # -----------------------------
     # Final styling
     # -----------------------------
+    st.write("Adding final styling")
     ax.set_axis_off()
     ax.set_aspect("equal")
     ax.set_title(map_title, fontsize=20, pad=20)
