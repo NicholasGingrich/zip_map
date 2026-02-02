@@ -7,7 +7,6 @@ from shapely.geometry import box
 from matplotlib.patches import Patch
 import json
 import streamlit as st
-from memory_profiler import profile
 
 
 def find_state_loc(state_abbr: str, state_locs):
@@ -44,7 +43,6 @@ def fig_to_png_bytes(_fig):
     return buf
 
 
-@profile
 def generate_map(
     data_df,
     zip_col,
