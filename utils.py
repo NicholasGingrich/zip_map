@@ -23,15 +23,15 @@ def load_state_locs(path="./state_abbv_offsets.json"):
 
 
 @st.cache_data(show_spinner=False)
-def load_zip_gdf(path="./data/zip_code_boundaries.shp"):
+def load_zip_gdf(path="./data/zip_code_boundaries.parquet"):
     """Load ZIP code boundaries shapefile."""
-    return gpd.read_file(path)
+    return gpd.read_parquet(path)
 
 
 @st.cache_data(show_spinner=False)
-def load_state_gdf(path="./data/state_boundaries.shp"):
+def load_state_gdf(path="./data/state_boundaries.parquet"):
     """Load US state boundaries shapefile, filtered."""
-    gdf = gpd.read_file(path)
+    gdf = gpd.read_parquet(path)
     return gdf[~gdf["STATE_ABBR"].isin(["VI", "GU", "MP", "AS"])]
 
 
