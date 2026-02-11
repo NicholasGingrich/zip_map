@@ -48,14 +48,13 @@ with st.expander("Advanced Options"):
 
     st.divider()
 
-    with st.expander("Select Colors"):
-        st.write("Click on a square to change the color. Colors will be included in the map from left to right based on the required number of colors to account for all values.")
-        cols = st.columns(len(map_colors))
+    st.write("Click on a square to change the color. Colors will be included in the map from left to right based on the required number of colors to account for all values.")
+    cols = st.columns(len(map_colors))
 
-        selected_colors = []
-        for col, default in zip(cols, map_colors):
-            with col:
-                selected_colors.append(st.color_picker(" ", default))
+    selected_colors = []
+    for col, default in zip(cols, map_colors):
+        with col:
+            selected_colors.append(st.color_picker(" ", default))
 
 
 generate_button = st.button("Generate Map")
@@ -207,8 +206,7 @@ if generate_button:
             unassigned_df = result["unassigned_df"]
             if unassigned_df is not None:
                 # Add in pannel with unassigned info
-                with st.expander("Click to View Unassigned Zipcodes"):
-                    st.write(unassigned_df)
+                st.write(unassigned_df)
             else:
                 st.error("Map generation failed.")
 
