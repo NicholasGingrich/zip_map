@@ -139,6 +139,7 @@ def generate_map(
         "MD": {"x": -0.4, "y": 0},
         "NJ": {"x": -0.3, "y": 0},
         "RI": {"x": 0, "y": 0.2},
+        "CT": {"x": 0, "y": 0.2}
     }
     for _, row in states.iterrows():
         abbr = row["STATE_ABBR"]
@@ -156,7 +157,7 @@ def generate_map(
     leader_lines_gdf = gpd.GeoDataFrame(leader_lines, crs=states.crs)
 
     # Plotting
-    fig, ax = plt.subplots(figsize=(26, 31), dpi=120)
+    fig, ax = plt.subplots(figsize=(26, 31), dpi=60)
 
     unique_vals = sorted(gdf[value_col].dropna().unique())
     base_colors = map_colors
