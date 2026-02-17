@@ -7,6 +7,10 @@ from shapely.geometry import box
 from matplotlib.patches import Patch
 import json
 import streamlit as st
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 
 def find_state_loc(state_abbr: str, state_locs):
@@ -52,11 +56,13 @@ def generate_map(
     map_title=None,
 ):
     # Load static data
+    logger.info("Get static data")
     state_locs = load_state_locs()
     zip_gdf = load_zip_gdf()
     states = load_state_gdf()
 
     # Normalize ZIPs
+    logger.info("Normalize ZIPS")
     data_df = data_df.copy()
     data_df[zip_col] = data_df[zip_col].astype(str).str.zfill(5)
 
@@ -67,6 +73,7 @@ def generate_map(
     originally_unassigned_mask = gdf[value_col].isna()
 
     # Auto-fill unassigned ZIPs (optional)
+    logger.info("Auto assign zips")
     if auto_fill_unassigned:
         gdf["ZIP_INT"] = gdf["ZIP_CODE"].astype(int)
         assigned_lookup = gdf.dropna(subset=[value_col]).set_index("ZIP_INT")[value_col].to_dict()
@@ -86,6 +93,7 @@ def generate_map(
     unassigned_df = gdf.loc[originally_unassigned_mask, ["ZIP_CODE", value_col]].fillna({value_col: "unassigned"}).rename(columns={value_col: "assigned_value"}).reset_index(drop=True)
 
     # Filter to CONUS + AK + HI + PR
+    logger.info("Filter bounds")
     bounds = gdf.geometry.bounds
     gdf = gdf[
         ((bounds.minx > -130) & (bounds.maxx < -60) & (bounds.miny > 24) & (bounds.maxy < 50))
@@ -95,6 +103,7 @@ def generate_map(
     ].copy()
 
     # Transform ZIP geometries
+    logger.info("Transform ZIP geometry")
     for i, row in gdf.iterrows():
         minx, miny, maxx, maxy = row.geometry.bounds
         geom = row.geometry
@@ -111,6 +120,7 @@ def generate_map(
         gdf.at[i, "geometry"] = geom
 
     # Transform state geometries
+    logger.info("Transform state geometry")
     states = states.to_crs(gdf.crs)
     for i, row in states.iterrows():
         abbr = row["STATE_ABBR"]
@@ -132,6 +142,7 @@ def generate_map(
     states = gpd.clip(states, clip_box)
 
     # Leader lines
+    logger.info("Creating leader lines")
     leader_lines = []
     SMALL_STATES = {
         "DC": {"x": -0.3, "y": 0.2},
@@ -157,6 +168,7 @@ def generate_map(
     leader_lines_gdf = gpd.GeoDataFrame(leader_lines, crs=states.crs)
 
     # Plotting
+    logger.info("Plotting")
     fig, ax = plt.subplots(figsize=(26, 31), dpi=60)
 
     unique_vals = sorted(gdf[value_col].dropna().unique())
@@ -169,6 +181,7 @@ def generate_map(
         gdf[gdf[value_col] == val].plot(ax=ax, facecolor=color, hatch=hatch, edgecolor=edge_color, linewidth=0, antialiased=False, rasterized=True)
 
     # Legend
+    logger.info("Creating legend")
     legend_handles = []
     for val, (color, hatch) in style_map.items():
         edge_color = "white" if hatch == ".." else "black"
@@ -187,6 +200,7 @@ def generate_map(
     )
 
     # Overlays
+    logger.info("Plotting overlays")
     states.boundary.plot(ax=ax, linewidth=0.5, edgecolor="black", zorder=5)
     leader_lines_gdf.plot(ax=ax, color="black", linewidth=0.8, zorder=6)
 
@@ -196,6 +210,7 @@ def generate_map(
         ax.text(row.label_x, row.label_y, row["STATE_ABBR"], fontsize=10, fontweight="bold", ha="center", va="center", zorder=6)
 
     # Final styling
+    logger.info("Final Styling")
     ax.set_axis_off()
     ax.set_aspect("equal")
     ax.set_title(map_title, fontsize=20, pad=20)
