@@ -18,6 +18,9 @@ if "png_bytes" not in st.session_state:
 if "csv_bytes" not in st.session_state:
     st.session_state.csv_bytes = None
 
+def set_processing():
+    st.session_state.processing = True
+
 # -----------------------------
 # Configuration
 # -----------------------------
@@ -56,7 +59,9 @@ with st.expander(label="Advanced Options"):
 
 generate_button = st.button(
     "Generate Map",
-    disabled=st.session_state.processing
+    disabled=st.session_state.processing,
+    type="primary",
+    on_click=set_processing
 )
 
 # -----------------------------
@@ -100,7 +105,7 @@ def download_s3_file_to_bytes(key):
 # -----------------------------
 # Main Logic
 # -----------------------------
-if generate_button and not st.session_state.processing:
+if generate_button:
     st.session_state.processing = True
     if not excel_file:
         st.session_state.processing = False
@@ -158,6 +163,7 @@ if generate_button and not st.session_state.processing:
 
     st.success("Map ready for download")
     st.session_state.processing = False
+    st.rerun()
 
 if st.session_state.png_bytes is not None:
     st.image(st.session_state.png_bytes)
