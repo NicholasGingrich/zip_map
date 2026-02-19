@@ -136,7 +136,7 @@ if generate_button and not st.session_state.processing:
         time.sleep(poll_interval)
         elapsed += poll_interval
         progress_bar.progress(min(elapsed / timeout, 0.99))
-        progress_text.text(f"Waiting for Map to Finish Generating... {elapsed}s elapsed")
+        progress_text.text(f"Waiting for Map to Finish Generating. Do not close or refresh the page... {elapsed}s elapsed")
 
     else:
         st.session_state.processing = False
