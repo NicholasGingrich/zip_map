@@ -41,12 +41,15 @@ def delete_s3_object(bucket_name, key):
     """Delete object from S3"""
     s3.delete_object(Bucket=bucket_name, Key=key)
 
+def get_s3_metadata(bucket, key):
+    resp = s3.head_object(Bucket=bucket, Key=key)
+    return resp.get("Metadata", {})
+
 # -----------------------------
 # Lambda Handler
 # -----------------------------
 def lambda_handler(event, context):
     try:
-
         import pandas as pd
         from zip_utils import generate_map, fig_to_png_bytes
         logger.info("Finished importing pandas and zip_utils functions")
@@ -85,8 +88,11 @@ def lambda_handler(event, context):
         # Extract column names from first row (or standardize)
         # Adjust this if you want dynamic columns via Streamlit inputs
         # -----------------------------
-        zip_col = "Zip"  # adjust if needed
-        value_col = "Regional Manager"  # adjust if needed
+        metadata = get_s3_metadata(bucket_name, object_key)
+        zip_col = metadata.get("zip_col", "ZIP")
+        value_col = metadata.get("value_col", "Value")
+        map_title = metadata.get("map_title") or None
+        logger.info(f"Metadata received: {metadata}")
 
         # -----------------------------
         # Generate map
@@ -102,7 +108,7 @@ def lambda_handler(event, context):
                 "#bfe2f5", "#139638",
             ],
             auto_fill_unassigned=True,
-            map_title="ZIP Coverage Map"
+            map_title=map_title
         )
         logger.info("Map Generation Complete")
 

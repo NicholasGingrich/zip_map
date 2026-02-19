@@ -1,7 +1,7 @@
 import streamlit as st
 import boto3
 import time
-import os
+from datetime import datetime
 
 # -----------------------------
 # Configuration
@@ -41,12 +41,26 @@ generate_button = st.button("Generate Map")
 # -----------------------------
 # Helpers
 # -----------------------------
-def upload_excel_to_s3(file):
-    """Uploads the file to S3 under uploads/"""
+def upload_excel_to_s3(file, zip_col, value_col, map_title):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = file.name.replace(".xlsx", f"_{timestamp}.xlsx").replace(" ", "_")
+    s3_key = f"{UPLOAD_PREFIX}{safe_name}"
 
-    s3_key = f"{UPLOAD_PREFIX}{file.name}"
-    s3.upload_fileobj(file, S3_BUCKET, s3_key)
+    s3.upload_fileobj(
+        file,
+        S3_BUCKET,
+        s3_key,
+        ExtraArgs={
+            "Metadata": {
+                "zip_col": zip_col,
+                "value_col": value_col,
+                "map_title": map_title or ""
+            }
+        }
+    )
+
     return s3_key
+
 
 def check_s3_file_exists(key):
     """Check if file exists in S3"""
@@ -77,7 +91,13 @@ if generate_button:
 
     # Upload Excel to S3
     with st.spinner("Uploading File For Processing..."):
-        excel_s3_key = upload_excel_to_s3(excel_file)
+        excel_s3_key = upload_excel_to_s3(
+            excel_file,
+            zip_col_label,
+            value_col_label,
+            map_title
+        )
+        st.write(excel_s3_key)
 
     # Poll for result
     result_s3_key = excel_s3_key.replace(UPLOAD_PREFIX, RESULTS_PREFIX).replace(".xlsx", ".png")
@@ -111,7 +131,7 @@ if generate_button:
     st.download_button(
         label="Download Map as PNG",
         data=png_bytes,
-        file_name="zip_coverage_map.png",
+        file_name="coverage_map.png",
         mime="image/png",
     )
 
