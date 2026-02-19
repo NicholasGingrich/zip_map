@@ -132,27 +132,32 @@ if generate_button:
     # Poll for result
     result_s3_key = excel_s3_key.replace(UPLOAD_PREFIX, RESULTS_PREFIX).replace(".xlsx", ".png")
     unassigned_s3_key = excel_s3_key.replace(UPLOAD_PREFIX, RESULTS_PREFIX).replace(".xlsx", "_unassigned.csv")
-    progress_text = st.empty()
-    progress_bar = st.progress(0)
 
-    poll_interval = 1  
-    timeout = 900 
+    poll_interval = 1
+    timeout = 900
     elapsed = 0
 
-    while elapsed < timeout:
-        if check_s3_file_exists(result_s3_key) and check_s3_file_exists(unassigned_s3_key):
-            progress_bar.progress(1.0)
-            progress_text.text("Done")
-            break
-        time.sleep(poll_interval)
-        elapsed += poll_interval
-        progress_bar.progress(min(elapsed / timeout, 0.99))
-        progress_text.text(f"Generating Map. Do not close or refresh the page... {elapsed}s elapsed")
+    with st.spinner("Generating Map. Do not close or refresh the page..."):
+        status_container = st.empty()
+        while elapsed < timeout:
+            # Update status text
+            status_container.text(f"{elapsed}s elapsed")
 
-    else:
-        st.session_state.processing = False
-        st.error("Timed out waiting for Lambda to generate the map.")
-        st.stop()
+            # Check if results exist
+            if check_s3_file_exists(result_s3_key) and check_s3_file_exists(unassigned_s3_key):
+                break
+
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+        else:
+            # Timeout
+            st.session_state.processing = False
+            status_container.empty()
+            st.error("Timed out waiting for Lambda to generate the map.")
+            st.stop()
+
+    # Success — clear the status message
+    status_container.empty()
 
     # Download result and display
     png_bytes = download_s3_file_to_bytes(result_s3_key)
