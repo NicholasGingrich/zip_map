@@ -2,6 +2,7 @@ import os
 import json
 import boto3
 import logging
+from io import StringIO
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -44,6 +45,26 @@ def delete_s3_object(bucket_name, key):
 def get_s3_metadata(bucket, key):
     resp = s3.head_object(Bucket=bucket, Key=key)
     return resp.get("Metadata", {})
+
+def upload_unassigned_csv(bucket_name, original_key, df):
+    """Upload unassigned ZIP dataframe as CSV"""
+    csv_buffer = StringIO()
+    df.to_csv(csv_buffer, index=False)
+
+    result_key = (
+        original_key
+        .replace("uploads/", "results/")
+        .replace(".xlsx", "_unassigned.csv")
+    )
+
+    s3.put_object(
+        Bucket=bucket_name,
+        Key=result_key,
+        Body=csv_buffer.getvalue(),
+        ContentType="text/csv"
+    )
+
+    return result_key
 
 # -----------------------------
 # Lambda Handler
@@ -92,13 +113,14 @@ def lambda_handler(event, context):
         zip_col = metadata.get("zip_col", "ZIP")
         value_col = metadata.get("value_col", "Value")
         map_title = metadata.get("map_title") or None
+        auto_assign_missing_zip_codes = True if metadata.get("auto_assign_zipcodes") == "True" else False
         logger.info(f"Metadata received: {metadata}")
 
         # -----------------------------
         # Generate map
         # -----------------------------
         logger.info("Generating Map from Excel File")
-        fig, _ = generate_map(
+        fig, unassigned_df = generate_map(
             data_df=df,
             zip_col=zip_col,
             value_col=value_col,
@@ -107,7 +129,7 @@ def lambda_handler(event, context):
                 "#5dc0ea", "#fbc895", "#B07AA1", "#FF9DA7",
                 "#bfe2f5", "#139638",
             ],
-            auto_fill_unassigned=True,
+            auto_fill_unassigned=auto_assign_missing_zip_codes,
             map_title=map_title
         )
         logger.info("Map Generation Complete")
@@ -118,9 +140,16 @@ def lambda_handler(event, context):
         logger.info("Finished converting map to bytes")
 
         # Upload result to S3
-        logger.info("Uploading PNG to S3")
+        logger.info("Uploading PNG/CSV to S3")
         result_key = upload_result_png(bucket_name, object_key, fig_bytes)
-        logger.info("Finished Uploading Map to S3")
+        unassigned_key = upload_unassigned_csv(
+            bucket_name,
+            object_key,
+            unassigned_df
+        )
+        logger.info(f"Uploaded unassigned CSV to {unassigned_key}")
+        logger.info(f"Uploaded PNG to {result_key}")
+
 
         # Delete the uploaded Excel
         logger.info("Deleting excel file from S3 /uploads folder")
@@ -128,7 +157,10 @@ def lambda_handler(event, context):
 
         return {
             "statusCode": 200,
-            "body": json.dumps({"result_s3_key": result_key})
+            "body": json.dumps({
+                "result_s3_key": result_key,         
+                "unassigned_s3_key": unassigned_key
+                })
         }
 
     except Exception as e:

@@ -1,7 +1,16 @@
+from io import BytesIO
 import streamlit as st
 import boto3
 import time
 from datetime import datetime
+import pandas as pd
+
+
+# ----------------------------
+# Initialize Streamlit State
+# ----------------------------
+if "processing" not in st.session_state:
+    st.session_state.processing = False
 
 # -----------------------------
 # Configuration
@@ -36,7 +45,13 @@ map_title = st.text_input(
 )
 excel_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
-generate_button = st.button("Generate Map")
+with st.expander(label="Advanced Options"):
+    auto_assign_zipcodes = st.checkbox(label="Auto-Assign Missing Zip Codes", value=True)
+
+generate_button = st.button(
+    "Generate Map",
+    disabled=st.session_state.processing
+)
 
 # -----------------------------
 # Helpers
@@ -54,7 +69,8 @@ def upload_excel_to_s3(file, zip_col, value_col, map_title):
             "Metadata": {
                 "zip_col": zip_col,
                 "value_col": value_col,
-                "map_title": map_title or ""
+                "map_title": map_title or "",
+                "auto_assign_zipcodes": str(auto_assign_zipcodes)
             }
         }
     )
@@ -78,14 +94,18 @@ def download_s3_file_to_bytes(key):
 # -----------------------------
 # Main Logic
 # -----------------------------
-if generate_button:
+if generate_button and not st.session_state.processing:
+    st.session_state.processing = True
     if not excel_file:
+        st.session_state.processing = False
         st.error("Please upload an Excel file.")
         st.stop()
     if not zip_col_label:
+        st.session_state.processing = False
         st.error("Please enter a Zip Code column label.")
         st.stop()
     if not value_col_label:
+        st.session_state.processing = False
         st.error("Please enter a Value column label.")
         st.stop()
 
@@ -97,10 +117,10 @@ if generate_button:
             value_col_label,
             map_title
         )
-        st.write(excel_s3_key)
 
     # Poll for result
     result_s3_key = excel_s3_key.replace(UPLOAD_PREFIX, RESULTS_PREFIX).replace(".xlsx", ".png")
+    unassigned_s3_key = excel_s3_key.replace(UPLOAD_PREFIX, RESULTS_PREFIX).replace(".xlsx", "_unassigned.csv")
     progress_text = st.empty()
     progress_bar = st.progress(0)
 
@@ -109,7 +129,7 @@ if generate_button:
     elapsed = 0
 
     while elapsed < timeout:
-        if check_s3_file_exists(result_s3_key):
+        if check_s3_file_exists(result_s3_key) and check_s3_file_exists(unassigned_s3_key):
             progress_bar.progress(1.0)
             progress_text.text("Done")
             break
@@ -119,11 +139,14 @@ if generate_button:
         progress_text.text(f"Waiting for Map to Finish Generating... {elapsed}s elapsed")
 
     else:
+        st.session_state.processing = False
         st.error("Timed out waiting for Lambda to generate the map.")
         st.stop()
 
     # Download result and display
     png_bytes = download_s3_file_to_bytes(result_s3_key)
+    csv_bytes = download_s3_file_to_bytes(unassigned_s3_key)
+    unassigned_df = pd.read_csv(BytesIO(csv_bytes))
 
     st.image(png_bytes)
 
@@ -135,4 +158,9 @@ if generate_button:
         mime="image/png",
     )
 
+    with st.expander(label="View Unassigned ZIP Codes"):
+        st.write("The following zipcodes were missing from uploaded excel file. If the Auto-Assign checkbox was seleced, the asissged values are shown below.")
+        st.dataframe(unassigned_df)
+
     st.success("Map ready for download")
+    st.session_state.processing = False
