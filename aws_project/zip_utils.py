@@ -1,79 +1,87 @@
-from io import BytesIO
-import geopandas as gpd
-import matplotlib.pyplot as plt
-from shapely import LineString
-from shapely.affinity import scale, translate
-from shapely.geometry import box
-from matplotlib.patches import Patch
-import json
-import streamlit as st
 import logging
+import json
+
+# -----------------------------
+# Default file paths (Lambda /tmp)
+# -----------------------------
+STATE_LOCS_FILE = "/tmp/state_abbv_offsets.json"
+STATE_PARQUET_PATH = "/tmp/state_boundaries.parquet"
+ZIP_PARQUET_PATH = "/tmp/zip_code_boundaries.parquet"
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-
+# -----------------------------
+# Helper functions
+# -----------------------------
 def find_state_loc(state_abbr: str, state_locs):
     for state_loc in state_locs:
         if state_loc["STATE_ABBR"] == state_abbr:
             return state_loc
     return None
 
-
-@st.cache_data(show_spinner=False)
-def load_state_locs(path="./state_abbv_offsets.json"):
+def load_state_locs(path=STATE_LOCS_FILE):
     with open(path, "r") as f:
         return json.load(f)
 
-
-@st.cache_data(show_spinner=False)
-def load_zip_gdf(path="./data/zip_code_boundaries.parquet"):
-    """Load ZIP code boundaries shapefile."""
+def load_zip_gdf(path=ZIP_PARQUET_PATH):
+    import geopandas as gpd
     return gpd.read_parquet(path)
 
-
-@st.cache_data(show_spinner=False)
-def load_state_gdf(path="./data/state_boundaries.parquet"):
-    """Load US state boundaries shapefile, filtered."""
+def load_state_gdf(path=STATE_PARQUET_PATH):
+    import geopandas as gpd
     gdf = gpd.read_parquet(path)
     return gdf[~gdf["STATE_ABBR"].isin(["VI", "GU", "MP", "AS"])]
 
-
-@st.cache_data(show_spinner=False)
 def fig_to_png_bytes(_fig):
+    from io import BytesIO
     buf = BytesIO()
     _fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
     buf.seek(0)
     return buf
 
-
+# -----------------------------
+# Main map generation
+# -----------------------------
 def generate_map(
     data_df,
     zip_col,
     value_col,
     map_colors,
-    auto_fill_unassigned=False,
+    auto_fill_unassigned=True,
     map_title=None,
 ):
+    logger.info(f"Running genreate_map with the following params. \nzip_col: {zip_col}\nvalue_col: {value_col}\nmap_colors: {map_colors}\nauto_fill_unassigned: {auto_fill_unassigned}\nmap_title: {map_title}")
+    logger.info("Importing heavy libs")
+    import geopandas as gpd
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    from shapely.geometry import box, LineString
+    from shapely.affinity import scale, translate
+    from matplotlib.patches import Patch
+    logger.info("Imported heavy libs")
+
     # Load static data
-    logger.info("Get static data")
+    logger.info("Loading static data")
     state_locs = load_state_locs()
     zip_gdf = load_zip_gdf()
     states = load_state_gdf()
+    logger.info("Loaded static data")
 
-    # Normalize ZIPs
-    logger.info("Normalize ZIPS")
+    # Normalize ZIP codes
+    logger.info("Normalizing zip codes")
     data_df = data_df.copy()
     data_df[zip_col] = data_df[zip_col].astype(str).str.zfill(5)
 
     # Merge data → ZIP geometries
+    logger.info("Merging data + zip geometries")
     gdf = zip_gdf.merge(data_df, left_on="ZIP_CODE", right_on=zip_col, how="left")
 
     # Track originally unassigned ZIPs
     originally_unassigned_mask = gdf[value_col].isna()
 
     # Auto-fill unassigned ZIPs (optional)
-    logger.info("Auto assign zips")
+    logger.info("Autofill unassigned zip codes")
     if auto_fill_unassigned:
         gdf["ZIP_INT"] = gdf["ZIP_CODE"].astype(int)
         assigned_lookup = gdf.dropna(subset=[value_col]).set_index("ZIP_INT")[value_col].to_dict()
@@ -86,14 +94,22 @@ def generate_map(
                     return lookup[zip_int + d]
             return "unassigned"
 
-        gdf.loc[originally_unassigned_mask, value_col] = gdf.loc[originally_unassigned_mask, "ZIP_INT"].apply(lambda z: find_nearest_value(z, assigned_lookup))
+        gdf.loc[originally_unassigned_mask, value_col] = gdf.loc[
+            originally_unassigned_mask, "ZIP_INT"
+        ].apply(lambda z: find_nearest_value(z, assigned_lookup))
         gdf.drop(columns="ZIP_INT", inplace=True)
 
     # Build unassigned report
-    unassigned_df = gdf.loc[originally_unassigned_mask, ["ZIP_CODE", value_col]].fillna({value_col: "unassigned"}).rename(columns={value_col: "assigned_value"}).reset_index(drop=True)
+    logger.info("Building unassinged report")
+    unassigned_df = (
+        gdf.loc[originally_unassigned_mask, ["ZIP_CODE", value_col]]
+        .fillna({value_col: "unassigned"})
+        .rename(columns={value_col: "assigned_value"})
+        .reset_index(drop=True)
+    )
 
     # Filter to CONUS + AK + HI + PR
-    logger.info("Filter bounds")
+    logger.info("Filtering state bounds")
     bounds = gdf.geometry.bounds
     gdf = gdf[
         ((bounds.minx > -130) & (bounds.maxx < -60) & (bounds.miny > 24) & (bounds.maxy < 50))
@@ -103,11 +119,10 @@ def generate_map(
     ].copy()
 
     # Transform ZIP geometries
-    logger.info("Transform ZIP geometry")
+    logger.info("Transforming zip geometries")
     for i, row in gdf.iterrows():
         minx, miny, maxx, maxy = row.geometry.bounds
         geom = row.geometry
-
         if -170 < minx < -130 and 50 < miny < 72:  # Alaska
             geom = scale(geom, 0.45, 0.75, origin=(0, 0))
             geom = translate(geom, -55, -23)
@@ -120,7 +135,7 @@ def generate_map(
         gdf.at[i, "geometry"] = geom
 
     # Transform state geometries
-    logger.info("Transform state geometry")
+    logger.info("Transforming state geometries")
     states = states.to_crs(gdf.crs)
     for i, row in states.iterrows():
         abbr = row["STATE_ABBR"]
@@ -142,7 +157,7 @@ def generate_map(
     states = gpd.clip(states, clip_box)
 
     # Leader lines
-    logger.info("Creating leader lines")
+    logger.info("Plotting leader lines")
     leader_lines = []
     SMALL_STATES = {
         "DC": {"x": -0.3, "y": 0.2},
@@ -150,7 +165,7 @@ def generate_map(
         "MD": {"x": -0.4, "y": 0},
         "NJ": {"x": -0.3, "y": 0},
         "RI": {"x": 0, "y": 0.2},
-        "CT": {"x": 0, "y": 0.2}
+        "CT": {"x": 0, "y": 0},
     }
     for _, row in states.iterrows():
         abbr = row["STATE_ABBR"]
@@ -162,14 +177,16 @@ def generate_map(
         leader_lines.append(
             {
                 "STATE_ABBR": abbr,
-                "geometry": LineString([(anchor.x, anchor.y), (loc["label_x"] + offset["x"], loc["label_y"] + offset["y"])]),
+                "geometry": LineString(
+                    [(anchor.x, anchor.y), (loc["label_x"] + offset["x"], loc["label_y"] + offset["y"])]
+                ),
             }
         )
     leader_lines_gdf = gpd.GeoDataFrame(leader_lines, crs=states.crs)
 
     # Plotting
-    logger.info("Plotting")
-    fig, ax = plt.subplots(figsize=(26, 31), dpi=60)
+    logger.info("Creating Plot")
+    fig, ax = plt.subplots(figsize=(26, 31), dpi=120)
 
     unique_vals = sorted(gdf[value_col].dropna().unique())
     base_colors = map_colors
@@ -200,7 +217,7 @@ def generate_map(
     )
 
     # Overlays
-    logger.info("Plotting overlays")
+    logger.info("Handling Overlays")
     states.boundary.plot(ax=ax, linewidth=0.5, edgecolor="black", zorder=5)
     leader_lines_gdf.plot(ax=ax, color="black", linewidth=0.8, zorder=6)
 
@@ -210,10 +227,11 @@ def generate_map(
         ax.text(row.label_x, row.label_y, row["STATE_ABBR"], fontsize=10, fontweight="bold", ha="center", va="center", zorder=6)
 
     # Final styling
-    logger.info("Final Styling")
+    logger.info("Applying final styling")
     ax.set_axis_off()
     ax.set_aspect("equal")
-    ax.set_title(map_title, fontsize=20, pad=20)
+    if map_title:
+        ax.set_title(map_title, fontsize=20, pad=20)
     xmin, xmax = ax.get_xlim()
     ax.set_xlim(xmin, xmax + 12)
     plt.tight_layout()

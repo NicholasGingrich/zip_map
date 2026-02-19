@@ -1,7 +1,0 @@
-pandas
-openpyxl
-geopandas
-plotly
-kaleido
-nbformat>=4.2.0
-matplotlib
