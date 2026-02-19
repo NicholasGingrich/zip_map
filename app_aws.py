@@ -18,6 +18,9 @@ if "png_bytes" not in st.session_state:
 if "csv_bytes" not in st.session_state:
     st.session_state.csv_bytes = None
 
+if "selected_colors" not in st.session_state:
+    st.session_state.selected_colors = []
+
 def set_processing():
     st.session_state.processing = True
 
@@ -56,6 +59,28 @@ excel_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
 with st.expander(label="Advanced Options"):
     auto_assign_zipcodes = st.checkbox(label="Auto-Assign Missing Zip Codes", value=True)
+    st.divider()
+    map_colors = [
+        "#1579b3",
+        "#fb9331",
+        "#92e091",
+        "#ff474a",
+        "#5dc0ea",
+        "#fbc895",
+        "#B07AA1",
+        "#FF9DA7",
+        "#bfe2f5",
+        "#139638",
+    ]
+
+    st.write("Click on a square to change the color. Colors will be included in the map from left to right based on the required number of colors to account for all values.")
+    cols = st.columns(len(map_colors))
+
+    selected_colors = []
+    for col, default in zip(cols, map_colors):
+        with col:
+            selected_colors.append(st.color_picker(" ", default))
+    st.session_state.selected_colors = selected_colors
 
 generate_button = st.button(
     "Generate Map",
@@ -81,7 +106,8 @@ def upload_excel_to_s3(file, zip_col, value_col, map_title):
                 "zip_col": zip_col,
                 "value_col": value_col,
                 "map_title": map_title or "",
-                "auto_assign_zipcodes": str(auto_assign_zipcodes)
+                "auto_assign_zipcodes": str(auto_assign_zipcodes),
+                "selected_colors": str(st.session_state.selected_colors)
             }
         }
     )
@@ -126,7 +152,7 @@ if generate_button:
             excel_file,
             zip_col_label,
             value_col_label,
-            map_title
+            map_title,
         )
 
     # Poll for result

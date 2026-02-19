@@ -2,6 +2,8 @@ import os
 import json
 import boto3
 import logging
+import json
+import ast
 from io import StringIO
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -114,6 +116,7 @@ def lambda_handler(event, context):
         value_col = metadata.get("value_col", "Value")
         map_title = metadata.get("map_title") or None
         auto_assign_missing_zip_codes = True if metadata.get("auto_assign_zipcodes") == "True" else False
+        selected_map_colors = ast.literal_eval(metadata.get("selected_colors"))
         logger.info(f"Metadata received: {metadata}")
 
         # -----------------------------
@@ -124,11 +127,7 @@ def lambda_handler(event, context):
             data_df=df,
             zip_col=zip_col,
             value_col=value_col,
-            map_colors=[
-                "#1579b3", "#fb9331", "#92e091", "#ff474a",
-                "#5dc0ea", "#fbc895", "#B07AA1", "#FF9DA7",
-                "#bfe2f5", "#139638",
-            ],
+            map_colors=selected_map_colors,
             auto_fill_unassigned=auto_assign_missing_zip_codes,
             map_title=map_title
         )
