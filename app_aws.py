@@ -12,6 +12,12 @@ import pandas as pd
 if "processing" not in st.session_state:
     st.session_state.processing = False
 
+if "png_bytes" not in st.session_state:
+    st.session_state.png_bytes = None
+
+if "csv_bytes" not in st.session_state:
+    st.session_state.csv_bytes = None
+
 # -----------------------------
 # Configuration
 # -----------------------------
@@ -136,7 +142,7 @@ if generate_button and not st.session_state.processing:
         time.sleep(poll_interval)
         elapsed += poll_interval
         progress_bar.progress(min(elapsed / timeout, 0.99))
-        progress_text.text(f"Waiting for Map to Finish Generating. Do not close or refresh the page... {elapsed}s elapsed")
+        progress_text.text(f"Generating Map. Do not close or refresh the page... {elapsed}s elapsed")
 
     else:
         st.session_state.processing = False
@@ -146,21 +152,26 @@ if generate_button and not st.session_state.processing:
     # Download result and display
     png_bytes = download_s3_file_to_bytes(result_s3_key)
     csv_bytes = download_s3_file_to_bytes(unassigned_s3_key)
-    unassigned_df = pd.read_csv(BytesIO(csv_bytes))
 
-    st.image(png_bytes)
+    st.session_state.png_bytes = png_bytes
+    st.session_state.csv_bytes = csv_bytes
+
+    st.success("Map ready for download")
+    st.session_state.processing = False
+
+if st.session_state.png_bytes is not None:
+    st.image(st.session_state.png_bytes)
 
     # Download button
     st.download_button(
         label="Download Map as PNG",
-        data=png_bytes,
+        data=st.session_state.png_bytes,
         file_name="coverage_map.png",
         mime="image/png",
     )
 
+if st.session_state.csv_bytes is not None:
     with st.expander(label="View Unassigned ZIP Codes"):
         st.write("The following zipcodes were missing from uploaded excel file. If the Auto-Assign checkbox was seleced, the asissged values are shown below.")
+        unassigned_df = pd.read_csv(BytesIO(st.session_state.csv_bytes))
         st.dataframe(unassigned_df)
-
-    st.success("Map ready for download")
-    st.session_state.processing = False
