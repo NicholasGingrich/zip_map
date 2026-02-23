@@ -46,21 +46,21 @@ st.title("ZIP Code Coverage Map")
 map_type = st.radio(label="Map Type", options=["By Zipcode", "By State"], index=0)
 
 geog_label = "Zip Code Column Label" if map_type == "By Zipcode" else "State Column Label"
-geog_help_label = "ZIP codes" if map_type == "By Zipcode" else "states"
+geog_help_label = "ZIP codes" if map_type == "By Zipcode" else "state names or state abbreviations"
 
 geog_col_label = st.text_input(
     geog_label,
-    help=f"Enter the name of the column in your Excel file that contains the {geog_help_label}."
+    help=f"Name of the column with your geographic values ({geog_help_label})."
 )
 value_col_label = st.text_input(
     "Value Column Label",
-    help="Enter the name of the column in your Excel file that contains the values to map."
+    help="Name of the column whose values will be used for color-coding the map."
 )
 map_title = st.text_input(
     "Map Title (Optional)",
     help="Optional map title for display purposes."
 )
-excel_file = st.file_uploader("Upload Excel File", type=["xlsx"])
+excel_file = st.file_uploader("Upload Excel File", type=["xlsx"], help="Note: Only data from the first sheet will be read.")
 
 with st.expander(label="Advanced Options"):
     auto_assign_zipcodes = st.checkbox(label="Auto-Assign Missing Zip Codes", value=True)
