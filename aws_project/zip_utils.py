@@ -40,6 +40,49 @@ def fig_to_png_bytes(_fig):
     buf.seek(0)
     return buf
 
+STATE_NAME_TO_ABBR = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+    "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID",
+    "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS",
+    "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
+    "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+    "vermont": "VT", "virginia": "VA", "washington": "WA", "west virginia": "WV",
+    "wisconsin": "WI", "wyoming": "WY", "district of columbia": "DC",
+    "puerto rico": "PR",
+}
+
+def normalize_state(val):
+    """Convert full state name or abbreviation (any case) to uppercase abbreviation."""
+    stripped = str(val).strip()
+    upper = stripped.upper()
+    # Already a valid abbreviation
+    if upper in STATE_NAME_TO_ABBR.values():
+        return upper
+    # Try as a full name
+    lower = stripped.lower()
+    if lower in STATE_NAME_TO_ABBR:
+        return STATE_NAME_TO_ABBR[lower]
+    # Unrecognized — return as-is uppercased so the merge fails visibly (gray)
+    logger.warning(f"Unrecognized state value: {val!r}")
+    return upper
+
+
+def normalize_col(df, col_param):
+    """Find the actual column name in df that matches col_param case-insensitively."""
+    col_lower = col_param.strip().lower()
+    matches = [c for c in df.columns if c.strip().lower() == col_lower]
+    if not matches:
+        raise ValueError(f"Column {col_param!r} not found in dataframe. Available columns: {list(df.columns)}")
+    if len(matches) > 1:
+        logger.warning(f"Multiple columns matched {col_param!r} case-insensitively: {matches}. Using first match.")
+    return matches[0]
+
 # -----------------------------
 # Main map generation
 # -----------------------------
@@ -74,6 +117,8 @@ def generate_map(
     logger.info("Loaded static data")
 
     data_df = data_df.copy()
+    geog_col = normalize_col(data_df, geog_col)
+    value_col = normalize_col(data_df, value_col)
 
     # ------------------------------------------------------------------ #
     #  ZIP MODE                                                           
@@ -148,9 +193,9 @@ def generate_map(
     #  STATE MODE                                                         
     # ------------------------------------------------------------------ #
     else:
-        # Normalize state abbreviations to uppercase
-        logger.info("Normalizing state abbreviations")
-        data_df[geog_col] = data_df[geog_col].astype(str).str.strip().str.upper()
+        # Normalize state abbreviations or full names (any case)
+        logger.info("Normalizing state values")
+        data_df[geog_col] = data_df[geog_col].apply(normalize_state)
 
         # Merge data → state geometries
         logger.info("Merging data + state geometries")
