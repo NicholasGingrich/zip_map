@@ -4,7 +4,9 @@ import boto3
 import logging
 import json
 import ast
-from io import StringIO
+from io import BytesIO, StringIO
+from urllib.parse import unquote_plus
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -72,6 +74,8 @@ def upload_unassigned_csv(bucket_name, original_key, df):
 # Lambda Handler
 # -----------------------------
 def lambda_handler(event, context):
+    bucket_name = None
+    object_key = None
     try:
         import pandas as pd
         from zip_utils import generate_map, fig_to_png_bytes
@@ -79,7 +83,7 @@ def lambda_handler(event, context):
         # S3 trigger info
         record = event["Records"][0]["s3"]
         bucket_name = record["bucket"]["name"]
-        object_key = record["object"]["key"]
+        object_key = unquote_plus(record["object"]["key"])
 
         logger.info(f"Processing Trigger Event. Record: {record}\nBucket Name: {bucket_name}\nObject Key: {object_key}")
 
@@ -99,13 +103,20 @@ def lambda_handler(event, context):
         # -----------------------------
         logger.info("Downloading excel file to /tmp")
         excel_path = download_excel_file(bucket_name, object_key)
+        file_size = os.path.getsize(excel_path)
+        logger.info(f"Downloaded excel file size: {file_size} bytes")
+        if file_size == 0:
+            raise ValueError("Downloaded Excel file is empty — possible S3 download issue.")
         logger.info("Finished Downloading excel file")
 
         # -----------------------------
         # Read Excel
         # -----------------------------
-        logger.info("Reading excel file into dataframe")
-        df = pd.read_excel(excel_path)
+        logger.info(f"Reading excel file '{excel_path}' into dataframe")
+        with open(excel_path, "rb") as f:
+            excel_bytes = BytesIO(f.read())
+
+        df = pd.read_excel(excel_bytes, engine="openpyxl")
 
         # -----------------------------
         # Extract column names from first row (or standardize)
@@ -166,8 +177,17 @@ def lambda_handler(event, context):
         }
 
     except Exception as e:
-        logger.info(f"Error running lambda. {e}")
-        logger
+        logger.exception(f"Error running lambda: {e}")
+
+        if bucket_name and object_key:
+            error_key = object_key.replace("uploads/", "results/").replace(".xlsx", "_error.json")
+            s3.put_object(
+                Bucket=bucket_name,
+                Key=error_key,
+                Body=json.dumps({"error": str(e)}),
+                ContentType="application/json"
+            )
+
         return {
             "statusCode": 500,
             "body": json.dumps({"error": str(e)})
