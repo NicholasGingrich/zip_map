@@ -4,6 +4,7 @@ import boto3
 import time
 from datetime import datetime
 import pandas as pd
+import json
 
 
 # ----------------------------
@@ -20,6 +21,9 @@ if "csv_bytes" not in st.session_state:
 
 if "selected_colors" not in st.session_state:
     st.session_state.selected_colors = []
+
+if "map_error" not in st.session_state:
+    st.session_state.map_error = None
 
 def set_processing():
     st.session_state.processing = True
@@ -78,7 +82,7 @@ with st.expander(label="Advanced Options"):
         "#139638",
     ]
 
-    st.write("Click on a square to change the color. Colors will be included in the map from left to right based on the required number of colors to account for all values.")
+    st.write("Colors are assigned to values in the order shown. Only as many colors as needed will be used.")
     cols = st.columns(len(map_colors))
 
     selected_colors = []
@@ -152,6 +156,31 @@ if generate_button:
         st.error("Please enter a Value column label.")
         st.stop()
 
+    with st.spinner("Validating column names..."):
+        try:
+            preview_df = pd.read_excel(excel_file, nrows=0)
+            columns_lower = [c.strip().lower() for c in preview_df.columns]
+            validation_errors = []
+            if geog_col_label.strip().lower() not in columns_lower:
+                validation_errors.append(f"Column '{geog_col_label}' not found in your Excel file. Available columns: {list(preview_df.columns)}")
+            if value_col_label.strip().lower() not in columns_lower:
+                validation_errors.append(f"Column '{value_col_label}' not found in your Excel file. Available columns: {list(preview_df.columns)}")
+            if validation_errors:
+                st.session_state.processing = False
+                st.session_state.map_error = validation_errors
+        except Exception as e:
+            st.session_state.processing = False
+            st.session_state.map_error = [f"Could not read Excel file: {e}"]
+
+    if st.session_state.map_error:
+        for err in st.session_state.map_error:
+            st.error(err)
+        st.session_state.map_error = None
+        st.stop()
+
+    # Reset buffer position after validation read
+    excel_file.seek(0)
+
     # Upload Excel to S3
     with st.spinner("Uploading File For Processing..."):
         excel_s3_key = upload_excel_to_s3(
@@ -164,6 +193,7 @@ if generate_button:
     # Poll for result
     result_s3_key = excel_s3_key.replace(UPLOAD_PREFIX, RESULTS_PREFIX).replace(".xlsx", ".png")
     unassigned_s3_key = excel_s3_key.replace(UPLOAD_PREFIX, RESULTS_PREFIX).replace(".xlsx", "_unassigned.csv")
+    error_s3_key = excel_s3_key.replace(UPLOAD_PREFIX, RESULTS_PREFIX).replace(".xlsx", "_error.json")
 
     poll_interval = 1
     timeout = 900
@@ -175,6 +205,14 @@ if generate_button:
             # Update status text
             status_container.text(f"{elapsed}s elapsed")
 
+            if check_s3_file_exists(error_s3_key):
+                error_body = json.loads(download_s3_file_to_bytes(error_s3_key).decode("utf-8"))
+                status_container.empty()
+                st.session_state.processing = False
+                st.session_state.map_error = [error_body["error"]]  
+                break
+                
+
             # Check if results exist
             if check_s3_file_exists(result_s3_key) and check_s3_file_exists(unassigned_s3_key):
                 break
@@ -185,8 +223,13 @@ if generate_button:
             # Timeout
             st.session_state.processing = False
             status_container.empty()
-            st.error("Timed out waiting for Lambda to generate the map.")
+            st.session_state.map_error = ["Timed out waiting for Lambda to generate the map."]
             st.stop()
+
+    if st.session_state.get("map_error"):
+        st.error(st.session_state.map_error)
+        st.session_state.map_error = None
+        st.stop()
 
     # Success — clear the status message
     status_container.empty()
