@@ -45,13 +45,14 @@ def fig_to_png_bytes(_fig):
 # -----------------------------
 def generate_map(
     data_df,
-    zip_col,
+    geog_col,
     value_col,
     map_colors,
+    geog_type="zip",
     auto_fill_unassigned=True,
     map_title=None,
 ):
-    logger.info(f"Running genreate_map with the following params. \nzip_col: {zip_col}\nvalue_col: {value_col}\nmap_colors: {map_colors}\nauto_fill_unassigned: {auto_fill_unassigned}\nmap_title: {map_title}")
+    logger.info(f"Running generate_map with the following params. \ngeog_col: {geog_col}\nvalue_col: {value_col}\nmap_colors: {map_colors}\ngeog_type: {geog_type}\nauto_fill_unassigned: {auto_fill_unassigned}\nmap_title: {map_title}")
     logger.info("Importing heavy libs")
     import geopandas as gpd
     import matplotlib.pyplot as plt
@@ -61,83 +62,121 @@ def generate_map(
     from matplotlib.patches import Patch
     logger.info("Imported heavy libs")
 
+    if geog_type not in ("zip", "state"):
+        raise ValueError(f"geog_type must be 'zip' or 'state', got: {geog_type!r}")
+
     # Load static data
     logger.info("Loading static data")
     state_locs = load_state_locs()
-    zip_gdf = load_zip_gdf()
     states = load_state_gdf()
+    if geog_type == "zip":
+        zip_gdf = load_zip_gdf()
     logger.info("Loaded static data")
 
-    # Normalize ZIP codes
-    logger.info("Normalizing zip codes")
     data_df = data_df.copy()
-    data_df[zip_col] = data_df[zip_col].astype(str).str.zfill(5)
 
-    # Merge data → ZIP geometries
-    logger.info("Merging data + zip geometries")
-    gdf = zip_gdf.merge(data_df, left_on="ZIP_CODE", right_on=zip_col, how="left")
+    # ------------------------------------------------------------------ #
+    #  ZIP MODE                                                           
+    # ------------------------------------------------------------------ #
+    if geog_type == "zip":
+        # Normalize ZIP codes
+        logger.info("Normalizing zip codes")
+        data_df[geog_col] = data_df[geog_col].astype(str).str.zfill(5)
 
-    # Track originally unassigned ZIPs
-    originally_unassigned_mask = gdf[value_col].isna()
+        # Merge data → ZIP geometries
+        logger.info("Merging data + zip geometries")
+        gdf = zip_gdf.merge(data_df, left_on="ZIP_CODE", right_on=geog_col, how="left")
 
-    # Auto-fill unassigned ZIPs (optional)
-    logger.info("Autofill unassigned zip codes")
-    if auto_fill_unassigned:
-        gdf["ZIP_INT"] = gdf["ZIP_CODE"].astype(int)
-        assigned_lookup = gdf.dropna(subset=[value_col]).set_index("ZIP_INT")[value_col].to_dict()
+        # Track originally unassigned ZIPs
+        originally_unassigned_mask = gdf[value_col].isna()
 
-        def find_nearest_value(zip_int, lookup, max_radius=500):
-            for d in range(1, max_radius + 1):
-                if zip_int - d in lookup:
-                    return lookup[zip_int - d]
-                if zip_int + d in lookup:
-                    return lookup[zip_int + d]
-            return "unassigned"
+        # Auto-fill unassigned ZIPs (optional)
+        logger.info("Autofill unassigned zip codes")
+        if auto_fill_unassigned:
+            gdf["ZIP_INT"] = gdf["ZIP_CODE"].astype(int)
+            assigned_lookup = gdf.dropna(subset=[value_col]).set_index("ZIP_INT")[value_col].to_dict()
 
-        gdf.loc[originally_unassigned_mask, value_col] = gdf.loc[
-            originally_unassigned_mask, "ZIP_INT"
-        ].apply(lambda z: find_nearest_value(z, assigned_lookup))
-        gdf.drop(columns="ZIP_INT", inplace=True)
+            def find_nearest_value(zip_int, lookup, max_radius=500):
+                for d in range(1, max_radius + 1):
+                    if zip_int - d in lookup:
+                        return lookup[zip_int - d]
+                    if zip_int + d in lookup:
+                        return lookup[zip_int + d]
+                return "unassigned"
 
-    # Build unassigned report
-    logger.info("Building unassinged report")
-    unassigned_df = (
-        gdf.loc[originally_unassigned_mask, ["ZIP_CODE", value_col]]
-        .fillna({value_col: "unassigned"})
-        .rename(columns={value_col: "assigned_value"})
-        .reset_index(drop=True)
-    )
+            gdf.loc[originally_unassigned_mask, value_col] = gdf.loc[
+                originally_unassigned_mask, "ZIP_INT"
+            ].apply(lambda z: find_nearest_value(z, assigned_lookup))
+            gdf.drop(columns="ZIP_INT", inplace=True)
 
-    # Filter to CONUS + AK + HI + PR
-    logger.info("Filtering state bounds")
-    bounds = gdf.geometry.bounds
-    gdf = gdf[
-        ((bounds.minx > -130) & (bounds.maxx < -60) & (bounds.miny > 24) & (bounds.maxy < 50))
-        | ((bounds.minx > -170) & (bounds.maxx < -130) & (bounds.miny > 50) & (bounds.maxy < 72))
-        | ((bounds.minx > -161) & (bounds.maxx < -154) & (bounds.miny > 18) & (bounds.maxy < 23))
-        | ((bounds.minx > -68) & (bounds.maxx < -65) & (bounds.miny > 17) & (bounds.maxy < 19.5))
-    ].copy()
+        # Build unassigned report
+        logger.info("Building unassigned report")
+        unassigned_df = (
+            gdf.loc[originally_unassigned_mask, ["ZIP_CODE", value_col]]
+            .fillna({value_col: "unassigned"})
+            .rename(columns={value_col: "assigned_value"})
+            .reset_index(drop=True)
+        )
 
-    # Transform ZIP geometries
-    logger.info("Transforming zip geometries")
-    for i, row in gdf.iterrows():
-        minx, miny, maxx, maxy = row.geometry.bounds
-        geom = row.geometry
-        if -170 < minx < -130 and 50 < miny < 72:  # Alaska
-            geom = scale(geom, 0.45, 0.75, origin=(0, 0))
-            geom = translate(geom, -55, -23)
-        elif -68 < minx < -65 and maxy < 30:  # Puerto Rico
-            geom = scale(geom, 3.75, 3.75, origin=(0, 0))
-            geom = translate(geom, 171.5, -47)
-        elif -172 < minx < -154 and miny < 50:  # Hawaii
-            geom = scale(geom, 2.25, 2.25, origin=(0, 0))
-            geom = translate(geom, 247, -24)
-        gdf.at[i, "geometry"] = geom
+        # Filter to CONUS + AK + HI + PR
+        logger.info("Filtering state bounds")
+        bounds = gdf.geometry.bounds
+        gdf = gdf[
+            ((bounds.minx > -130) & (bounds.maxx < -60) & (bounds.miny > 24) & (bounds.maxy < 50))
+            | ((bounds.minx > -170) & (bounds.maxx < -130) & (bounds.miny > 50) & (bounds.maxy < 72))
+            | ((bounds.minx > -161) & (bounds.maxx < -154) & (bounds.miny > 18) & (bounds.maxy < 23))
+            | ((bounds.minx > -68) & (bounds.maxx < -65) & (bounds.miny > 17) & (bounds.maxy < 19.5))
+        ].copy()
 
-    # Transform state geometries
+        # Transform ZIP geometries
+        logger.info("Transforming zip geometries")
+        for i, row in gdf.iterrows():
+            minx, miny, maxx, maxy = row.geometry.bounds
+            geom = row.geometry
+            if -170 < minx < -130 and 50 < miny < 72:  # Alaska
+                geom = scale(geom, 0.45, 0.75, origin=(0, 0))
+                geom = translate(geom, -55, -23)
+            elif -68 < minx < -65 and maxy < 30:  # Puerto Rico
+                geom = scale(geom, 3.75, 3.75, origin=(0, 0))
+                geom = translate(geom, 171.5, -47)
+            elif -172 < minx < -154 and miny < 50:  # Hawaii
+                geom = scale(geom, 2.25, 2.25, origin=(0, 0))
+                geom = translate(geom, 247, -24)
+            gdf.at[i, "geometry"] = geom
+
+    # ------------------------------------------------------------------ #
+    #  STATE MODE                                                         
+    # ------------------------------------------------------------------ #
+    else:
+        # Normalize state abbreviations to uppercase
+        logger.info("Normalizing state abbreviations")
+        data_df[geog_col] = data_df[geog_col].astype(str).str.strip().str.upper()
+
+        # Merge data → state geometries
+        logger.info("Merging data + state geometries")
+        gdf = states.merge(data_df, left_on="STATE_ABBR", right_on=geog_col, how="left")
+
+        # Track originally unassigned states
+        originally_unassigned_mask = gdf[value_col].isna()
+
+        # Build unassigned report (before any fill — gray means truly missing)
+        logger.info("Building unassigned report")
+        unassigned_df = (
+            gdf.loc[originally_unassigned_mask, ["STATE_ABBR", value_col]]
+            .fillna({value_col: "unassigned"})
+            .rename(columns={value_col: "assigned_value"})
+            .reset_index(drop=True)
+        )
+
+        states = gdf.copy()
+
+    # ------------------------------------------------------------------ #
+    #  SHARED: Transform state geometries                                 
+    # ------------------------------------------------------------------ #
     logger.info("Transforming state geometries")
-    states = states.to_crs(gdf.crs)
-    for i, row in states.iterrows():
+    states_plot = (states if geog_type == "state" else load_state_gdf())
+    states_plot = states_plot.to_crs(gdf.crs)
+    for i, row in states_plot.iterrows():
         abbr = row["STATE_ABBR"]
         geom = row.geometry
         if abbr == "AK":
@@ -149,14 +188,20 @@ def generate_map(
         elif abbr == "PR":
             geom = scale(geom, 3.75, 3.75, origin=(0, 0))
             geom = translate(geom, 171.5, -47)
-        states.at[i, "geometry"] = geom
+        states_plot.at[i, "geometry"] = geom
+
+    # In state mode, gdf IS states_plot (same merged frame), so sync geometries
+    if geog_type == "state":
+        gdf = states_plot.copy()
 
     # Clip to plotting box
     clip_box = box(-130, 18, -60, 55)
     gdf = gpd.clip(gdf, clip_box)
-    states = gpd.clip(states, clip_box)
+    states_plot = gpd.clip(states_plot, clip_box)
 
-    # Leader lines
+    # ------------------------------------------------------------------ #
+    #  SHARED: Leader lines for small states                              
+    # ------------------------------------------------------------------ #
     logger.info("Plotting leader lines")
     leader_lines = []
     SMALL_STATES = {
@@ -167,7 +212,7 @@ def generate_map(
         "RI": {"x": 0, "y": 0.2},
         "CT": {"x": 0, "y": 0},
     }
-    for _, row in states.iterrows():
+    for _, row in states_plot.iterrows():
         abbr = row["STATE_ABBR"]
         if abbr not in SMALL_STATES:
             continue
@@ -182,20 +227,34 @@ def generate_map(
                 ),
             }
         )
-    leader_lines_gdf = gpd.GeoDataFrame(leader_lines, crs=states.crs)
+    leader_lines_gdf = gpd.GeoDataFrame(leader_lines, crs=states_plot.crs)
 
-    # Plotting
+    # ------------------------------------------------------------------ #
+    #  SHARED: Plotting                                                   
+    # ------------------------------------------------------------------ #
     logger.info("Creating Plot")
     fig, ax = plt.subplots(figsize=(26, 31), dpi=120)
 
     unique_vals = sorted(gdf[value_col].dropna().unique())
     base_colors = map_colors
     hatches = ["", "//", "..", "xx", "\\\\"]
-    style_map = {val: (base_colors[i % len(base_colors)], hatches[i // len(base_colors)]) for i, val in enumerate(unique_vals)}
+    style_map = {
+        val: (base_colors[i % len(base_colors)], hatches[i // len(base_colors)])
+        for i, val in enumerate(unique_vals)
+    }
 
+    # Draw assigned values
     for val, (color, hatch) in style_map.items():
         edge_color = "white" if hatch == ".." else "none"
-        gdf[gdf[value_col] == val].plot(ax=ax, facecolor=color, hatch=hatch, edgecolor=edge_color, linewidth=0, antialiased=False, rasterized=True)
+        gdf[gdf[value_col] == val].plot(
+            ax=ax, facecolor=color, hatch=hatch, edgecolor=edge_color,
+            linewidth=0, antialiased=False, rasterized=True
+        )
+
+    # Draw unassigned areas as gray (relevant in both modes)
+    unassigned_geom = gdf[gdf[value_col].isna()]
+    if not unassigned_geom.empty:
+        unassigned_geom.plot(ax=ax, facecolor="#cccccc", edgecolor="none", linewidth=0, rasterized=True)
 
     # Legend
     logger.info("Creating legend")
@@ -203,6 +262,8 @@ def generate_map(
     for val, (color, hatch) in style_map.items():
         edge_color = "white" if hatch == ".." else "black"
         legend_handles.append(Patch(facecolor=color, hatch=hatch, edgecolor=edge_color, linewidth=0, label=val))
+    if not unassigned_geom.empty:
+        legend_handles.append(Patch(facecolor="#cccccc", edgecolor="black", linewidth=0, label="Unassigned"))
     ax.legend(
         handles=legend_handles,
         loc="center right",
@@ -218,13 +279,16 @@ def generate_map(
 
     # Overlays
     logger.info("Handling Overlays")
-    states.boundary.plot(ax=ax, linewidth=0.5, edgecolor="black", zorder=5)
+    states_plot.boundary.plot(ax=ax, linewidth=0.5, edgecolor="black", zorder=5)
     leader_lines_gdf.plot(ax=ax, color="black", linewidth=0.8, zorder=6)
 
-    states["label_x"] = states["STATE_ABBR"].apply(lambda s: find_state_loc(s, state_locs)["label_x"])
-    states["label_y"] = states["STATE_ABBR"].apply(lambda s: find_state_loc(s, state_locs)["label_y"])
-    for _, row in states.iterrows():
-        ax.text(row.label_x, row.label_y, row["STATE_ABBR"], fontsize=10, fontweight="bold", ha="center", va="center", zorder=6)
+    states_plot["label_x"] = states_plot["STATE_ABBR"].apply(lambda s: find_state_loc(s, state_locs)["label_x"])
+    states_plot["label_y"] = states_plot["STATE_ABBR"].apply(lambda s: find_state_loc(s, state_locs)["label_y"])
+    for _, row in states_plot.iterrows():
+        ax.text(
+            row.label_x, row.label_y, row["STATE_ABBR"],
+            fontsize=10, fontweight="bold", ha="center", va="center", zorder=6
+        )
 
     # Final styling
     logger.info("Applying final styling")

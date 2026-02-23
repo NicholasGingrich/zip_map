@@ -112,11 +112,13 @@ def lambda_handler(event, context):
         # Adjust this if you want dynamic columns via Streamlit inputs
         # -----------------------------
         metadata = get_s3_metadata(bucket_name, object_key)
-        zip_col = metadata.get("zip_col", "ZIP")
-        value_col = metadata.get("value_col", "Value")
+        geog_col = metadata.get("geog_col")
+        value_col = metadata.get("value_col")
         map_title = metadata.get("map_title") or None
         auto_assign_missing_zip_codes = True if metadata.get("auto_assign_zipcodes") == "True" else False
         selected_map_colors = ast.literal_eval(metadata.get("selected_colors"))
+        map_type=metadata.get("map_type")
+        geog_type = "zip" if map_type == "By Zipcode" else "state"
         logger.info(f"Metadata received: {metadata}")
 
         # -----------------------------
@@ -125,11 +127,12 @@ def lambda_handler(event, context):
         logger.info("Generating Map from Excel File")
         fig, unassigned_df = generate_map(
             data_df=df,
-            zip_col=zip_col,
+            geog_col=geog_col,
             value_col=value_col,
             map_colors=selected_map_colors,
             auto_fill_unassigned=auto_assign_missing_zip_codes,
-            map_title=map_title
+            map_title=map_title,
+            geog_type=geog_type
         )
         logger.info("Map Generation Complete")
 

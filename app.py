@@ -43,9 +43,14 @@ st.title("ZIP Code Coverage Map")
 # -----------------------------
 # User Inputs
 # -----------------------------
-zip_col_label = st.text_input(
-    "Zip Code Column Label",
-    help="Enter the name of the column in your Excel file that contains ZIP codes."
+map_type = st.radio(label="Map Type", options=["By Zipcode", "By State"], index=0)
+
+geog_label = "Zip Code Column Label" if map_type == "By Zipcode" else "State Column Label"
+geog_help_label = "ZIP codes" if map_type == "By Zipcode" else "states"
+
+geog_col_label = st.text_input(
+    geog_label,
+    help=f"Enter the name of the column in your Excel file that contains the {geog_help_label}."
 )
 value_col_label = st.text_input(
     "Value Column Label",
@@ -92,7 +97,7 @@ generate_button = st.button(
 # -----------------------------
 # Helpers
 # -----------------------------
-def upload_excel_to_s3(file, zip_col, value_col, map_title):
+def upload_excel_to_s3(file, geog_col, value_col, map_title):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_name = file.name.replace(".xlsx", f"_{timestamp}.xlsx").replace(" ", "_")
     s3_key = f"{UPLOAD_PREFIX}{safe_name}"
@@ -103,11 +108,12 @@ def upload_excel_to_s3(file, zip_col, value_col, map_title):
         s3_key,
         ExtraArgs={
             "Metadata": {
-                "zip_col": zip_col,
+                "geog_col": geog_col,
                 "value_col": value_col,
                 "map_title": map_title or "",
                 "auto_assign_zipcodes": str(auto_assign_zipcodes),
-                "selected_colors": str(st.session_state.selected_colors)
+                "selected_colors": str(st.session_state.selected_colors),
+                "map_type": map_type
             }
         }
     )
@@ -137,7 +143,7 @@ if generate_button:
         st.session_state.processing = False
         st.error("Please upload an Excel file.")
         st.stop()
-    if not zip_col_label:
+    if not geog_col_label:
         st.session_state.processing = False
         st.error("Please enter a Zip Code column label.")
         st.stop()
@@ -150,7 +156,7 @@ if generate_button:
     with st.spinner("Uploading File For Processing..."):
         excel_s3_key = upload_excel_to_s3(
             excel_file,
-            zip_col_label,
+            geog_col_label,
             value_col_label,
             map_title,
         )
