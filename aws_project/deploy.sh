@@ -2,7 +2,7 @@
 set -e
 
 # -----------------------------
-# CONFIG — EDIT THESE
+# CONFIG
 # -----------------------------
 AWS_REGION="us-east-1"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
