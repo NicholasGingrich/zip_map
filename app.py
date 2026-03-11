@@ -46,7 +46,7 @@ s3 = boto3.client(
 # Page Setup
 # -----------------------------
 st.set_page_config(layout="wide")
-st.title("ZIP Code Coverage Map")
+st.title("US Coverage Map")
 
 # -----------------------------
 # User Inputs
@@ -56,13 +56,9 @@ map_type = st.radio(label="Map Type", options=["By Zipcode", "By State"], index=
 geog_label = "Zip Code Column Label" if map_type == "By Zipcode" else "State Column Label"
 geog_help_label = "ZIP codes" if map_type == "By Zipcode" else "state names or state abbreviations"
 
-geog_col_label = st.text_input(
-    geog_label,
-    help=f"Name of the column with your geographic values ({geog_help_label})."
-)
 value_col_label = st.text_input(
     "Value Column Label",
-    help="Name of the column whose values will be used for color-coding the map."
+    help="Name of the column whose values will be used for color-coding the map. Use the name of the column in the first row (e.g. 'Manager') and not the name of the excel column (e.g. column 'G')."
 )
 map_title = st.text_input(
     "Map Title (Optional)",
@@ -71,7 +67,14 @@ map_title = st.text_input(
 excel_file = st.file_uploader("Upload Excel File", type=["xlsx"], help="Note: Only data from the first sheet will be read.")
 
 with st.expander(label="Advanced Options"):
-    auto_assign_zipcodes = st.checkbox(label="Auto-Assign Missing Zip Codes", value=True)
+    default_geog_value = "Zip" if map_type == "By Zipcode" else "State"
+    geog_col_label = st.text_input(
+        geog_label,
+        value="Zip",
+        help=f"Name of the column with your geographic values ({geog_help_label}). Defaults to 'Zip'. Use the name of the column in the first row (e.g. 'Zip') and not the name of the excel column (e.g. column 'B)"
+    )
+    st.divider()
+    auto_assign_zipcodes = st.checkbox(label="Auto-Assign Missing Zip Codes", value=True, help="If selected, will auto-color ZIP codes that are missing from the excel file. Has no effect on the map if plotting by state.")
     st.divider()
     map_colors = [
         "#1579b3",
