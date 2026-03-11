@@ -278,7 +278,7 @@ def generate_map(
     #  SHARED: Plotting                                                   
     # ------------------------------------------------------------------ #
     logger.info("Creating Plot")
-    fig, ax = plt.subplots(figsize=(26, 31), dpi=120)
+    fig, ax = plt.subplots(figsize=(22, 31), dpi=120)
 
     unique_vals = sorted(gdf[value_col].dropna().unique())
     base_colors = map_colors
