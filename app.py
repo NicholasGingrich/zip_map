@@ -1,4 +1,5 @@
 from io import BytesIO
+from PIL import Image
 import streamlit as st
 import boto3
 import time
@@ -146,10 +147,31 @@ def check_s3_file_exists(key):
     except s3.exceptions.ClientError:
         return False
 
+
 def download_s3_file_to_bytes(key):
     """Download S3 object into bytes"""
     obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
     return obj["Body"].read()
+
+
+def squish_width_preserve_legend(png_bytes, new_width=1200, legend_pct=0.125):
+    img = Image.open(BytesIO(png_bytes))
+    
+    legend_start = int(img.width * (1 - legend_pct))
+    
+    map_part = img.crop((0, 0, legend_start, img.height))
+    legend_part = img.crop((legend_start, 0, img.width, img.height))
+    
+    squished_map_width = new_width - legend_part.width
+    map_part = map_part.resize((squished_map_width, img.height), Image.LANCZOS)
+    
+    result = Image.new("RGB", (new_width, img.height))
+    result.paste(map_part, (0, 0))
+    result.paste(legend_part, (squished_map_width, 0))
+    
+    buf = BytesIO()
+    result.save(buf, format="PNG")
+    return buf.getvalue()
 
 # -----------------------------
 # Main Logic
@@ -257,6 +279,10 @@ if generate_button:
     # Download result and display
     png_bytes = download_s3_file_to_bytes(result_s3_key)
     csv_bytes = download_s3_file_to_bytes(unassigned_s3_key)
+
+    # Resize the png
+    png_bytes = squish_width_preserve_legend(png_bytes, new_width=5600)
+
 
     st.session_state.png_bytes = png_bytes
     st.session_state.csv_bytes = csv_bytes
