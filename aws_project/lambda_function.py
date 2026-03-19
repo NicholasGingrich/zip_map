@@ -110,15 +110,6 @@ def lambda_handler(event, context):
         logger.info("Finished Downloading excel file")
 
         # -----------------------------
-        # Read Excel
-        # -----------------------------
-        logger.info(f"Reading excel file '{excel_path}' into dataframe")
-        with open(excel_path, "rb") as f:
-            excel_bytes = BytesIO(f.read())
-
-        df = pd.read_excel(excel_bytes, engine="openpyxl")
-
-        # -----------------------------
         # Extract column names from first row (or standardize)
         # Adjust this if you want dynamic columns via Streamlit inputs
         # -----------------------------
@@ -130,8 +121,19 @@ def lambda_handler(event, context):
         selected_map_colors = ast.literal_eval(metadata.get("selected_colors"))
         map_type=metadata.get("map_type")
         geog_type = "zip" if map_type == "By Zipcode" else "state"
+        sheet_name = [metadata.get("sheet_name")] if metadata.get("sheet_name") != "" else None
         logger.info(f"Metadata received: {metadata}")
 
+
+        # -----------------------------
+        # Read Excel
+        # -----------------------------
+        logger.info(f"Reading excel file '{excel_path}' into dataframe")
+        with open(excel_path, "rb") as f:
+            excel_bytes = BytesIO(f.read())
+
+        df_dict = pd.read_excel(excel_bytes, engine="openpyxl", sheet_name=sheet_name)
+        df = next(iter(df_dict.values()))
         # -----------------------------
         # Generate map
         # -----------------------------

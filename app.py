@@ -56,6 +56,11 @@ map_type = st.radio(label="Map Type", options=["By Zipcode", "By State"], index=
 geog_label = "Zip Code Column Label" if map_type == "By Zipcode" else "State Column Label"
 geog_help_label = "ZIP codes" if map_type == "By Zipcode" else "state names or state abbreviations"
 
+sheet_name_label = st.text_input(
+    "Sheet Name (Optional)",
+    help="The name of the sheet with the data to plot. If empty, will default to the first sheet."
+)
+
 value_col_label = st.text_input(
     "Value Column Label",
     help="Name of the column whose values will be used for color-coding the map. Use the name of the column in the first row (e.g. 'Manager') and not the name of the excel column (e.g. column 'G')."
@@ -70,7 +75,7 @@ with st.expander(label="Advanced Options"):
     default_geog_value = "Zip" if map_type == "By Zipcode" else "State"
     geog_col_label = st.text_input(
         geog_label,
-        value="Zip",
+        value=default_geog_value,
         help=f"Name of the column with your geographic values ({geog_help_label}). Defaults to 'Zip'. Use the name of the column in the first row (e.g. 'Zip') and not the name of the excel column (e.g. column 'B)"
     )
     st.divider()
@@ -124,7 +129,8 @@ def upload_excel_to_s3(file, geog_col, value_col, map_title):
                 "map_title": map_title or "",
                 "auto_assign_zipcodes": str(auto_assign_zipcodes),
                 "selected_colors": str(st.session_state.selected_colors),
-                "map_type": map_type
+                "map_type": map_type,
+                "sheet_name": sheet_name_label
             }
         }
     )
@@ -165,7 +171,9 @@ if generate_button:
 
     with st.spinner("Validating column names..."):
         try:
-            preview_df = pd.read_excel(excel_file, nrows=0)
+            sheet_name_final = None if sheet_name_label == "" else [sheet_name_label]
+            preview_df_dict = pd.read_excel(excel_file, nrows=0, sheet_name=sheet_name_final)
+            preview_df = next(iter(preview_df_dict.values()))
             columns_lower = [c.strip().lower() for c in preview_df.columns]
             validation_errors = []
             if geog_col_label.strip().lower() not in columns_lower:
@@ -176,8 +184,13 @@ if generate_button:
                 st.session_state.processing = False
                 st.session_state.map_error = validation_errors
         except Exception as e:
+            error = e
+            if str(e) == f"Worksheet named '{sheet_name_final}' not found":
+                error = "Invalid sheet name inputted. Make sure the sheet name matches the excel file."
             st.session_state.processing = False
-            st.session_state.map_error = [f"Could not read Excel file: {e}"]
+            st.session_state.map_error = [f"Could not read Excel file: {error}"]
+
+            
 
     if st.session_state.map_error:
         for err in st.session_state.map_error:
