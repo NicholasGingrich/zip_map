@@ -83,66 +83,6 @@ def normalize_col(df, col_param):
         logger.warning(f"Multiple columns matched {col_param!r} case-insensitively: {matches}. Using first match.")
     return matches[0]
 
-
-def build_value_adjacency(gdf, value_col):
-    """
-    Returns a set of frozensets {val1, val2} for all pairs of distinct values
-    whose regions share a boundary.
-    """
-    import geopandas as gpd
-
-    assigned = gdf[gdf[value_col].notna()].copy().reset_index(drop=True)
-    if assigned.empty:
-        return set()
-
-    joined = gpd.sjoin(
-        assigned[[value_col, "geometry"]],
-        assigned[[value_col, "geometry"]],
-        how="inner",
-        predicate="touches",
-    )
-
-    right_col = value_col + "_right"
-    adjacency = set()
-    for _, row in joined.iterrows():
-        v1, v2 = row[value_col], row[right_col]
-        if v1 != v2:
-            adjacency.add(frozenset([v1, v2]))
-
-    return adjacency
-
-
-def greedy_color_assignment(unique_vals, adjacency, num_colors):
-    """
-    Greedy graph coloring. Returns dict: val -> color_index.
-    Ensures no two adjacent values share the same color index.
-    Orders by degree (most-connected first) for better packing.
-    """
-    # Sort by descending degree so the most-connected nodes are colored first
-    degree = {v: 0 for v in unique_vals}
-    for pair in adjacency:
-        for v in pair:
-            if v in degree:
-                degree[v] += 1
-    ordered = sorted(unique_vals, key=lambda v: -degree[v])
-
-    color_map = {}
-    for val in ordered:
-        neighbor_colors = {
-            color_map[neighbor]
-            for pair in adjacency
-            if val in pair
-            for neighbor in pair
-            if neighbor != val and neighbor in color_map
-        }
-        color_idx = next(
-            (c for c in range(num_colors) if c not in neighbor_colors),
-            0,  # fallback — shouldn't happen with 10 colors on a planar map
-        )
-        color_map[val] = color_idx
-
-    return color_map
-
 # -----------------------------
 # Main map generation
 # -----------------------------
@@ -343,26 +283,9 @@ def generate_map(
     unique_vals = sorted(gdf[value_col].dropna().unique())
     base_colors = map_colors
     hatches = ["", "//", "..", "xx", "\\\\"]
-
-    # Build adjacency graph and assign colors so no two adjacent groups share one
-    logger.info("Building value adjacency graph for color assignment")
-    adjacency = build_value_adjacency(gdf, value_col)
-    color_indices = greedy_color_assignment(unique_vals, adjacency, len(base_colors))
-
-    # Assign hatches: values sharing a color (non-adjacent by definition) get different hatches
-    from collections import defaultdict
-    color_to_vals = defaultdict(list)
-    for val in unique_vals:
-        color_to_vals[color_indices[val]].append(val)
-
-    val_hatch = {}
-    for vals_with_color in color_to_vals.values():
-        for hatch_idx, val in enumerate(vals_with_color):
-            val_hatch[val] = hatches[hatch_idx % len(hatches)]
-
     style_map = {
-        val: (base_colors[color_indices[val]], val_hatch[val])
-        for val in unique_vals
+        val: (base_colors[i % len(base_colors)], hatches[i // len(base_colors)])
+        for i, val in enumerate(unique_vals)
     }
 
     # Draw assigned values
