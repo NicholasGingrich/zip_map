@@ -28,6 +28,7 @@ if "map_error" not in st.session_state:
 
 def set_processing():
     st.session_state.processing = True
+    st.session_state.map_error = None  # Clear previous errors on new attempt
 
 # -----------------------------
 # Configuration
@@ -58,12 +59,12 @@ geog_label = "Zip Code Column Label" if map_type == "By Zipcode" else "State Col
 geog_help_label = "ZIP codes" if map_type == "By Zipcode" else "state names or state abbreviations"
 
 sheet_name_label = st.text_input(
-    "Sheet Name (Optional)",
+    "Sheet Name (Exactly as Appears in the Excel File)",
     help="The name of the sheet with the data to plot. If empty, will default to the first sheet."
 )
 
 value_col_label = st.text_input(
-    "Value Column Label",
+    "Job Title (From Row 1 in the Excel File)",
     help="Name of the column whose values will be used for color-coding the map. Use the name of the column in the first row (e.g. 'Manager') and not the name of the excel column (e.g. column 'G')."
 )
 map_title = st.text_input(
@@ -110,6 +111,12 @@ generate_button = st.button(
     type="primary",
     on_click=set_processing
 )
+
+# Display any errors from previous run here, outside generate_button block
+if st.session_state.map_error:
+    for err in st.session_state.map_error:
+        st.error(err)
+    st.session_state.map_error = None
 
 # -----------------------------
 # Helpers
@@ -177,48 +184,52 @@ def squish_width_preserve_legend(png_bytes, new_width=1200, legend_pct=0.125):
 # Main Logic
 # -----------------------------
 if generate_button:
-    st.session_state.processing = True
     if not excel_file:
         st.session_state.processing = False
-        st.error("Please upload an Excel file.")
-        st.stop()
+        st.session_state.map_error = ["Please upload an Excel file."]
+        st.rerun()
     if not geog_col_label:
         st.session_state.processing = False
-        st.error("Please enter a Zip Code column label.")
-        st.stop()
+        st.session_state.map_error = ["Please enter a Zip Code column label."]
+        st.rerun()
     if not value_col_label:
         st.session_state.processing = False
-        st.error("Please enter a Value column label.")
-        st.stop()
+        st.session_state.map_error = ["Please enter a Value column label."]
+        st.rerun()
 
     with st.spinner("Validating column names..."):
         try:
-            sheet_name_final = None if sheet_name_label == "" else [sheet_name_label]
-            preview_df_dict = pd.read_excel(excel_file, nrows=0, sheet_name=sheet_name_final)
+            sheet_name_final = None if sheet_name_label == "" else sheet_name_label
+            preview_df_dict = pd.read_excel(excel_file, nrows=0, sheet_name=[sheet_name_final])
             preview_df = next(iter(preview_df_dict.values()))
             columns_lower = [c.strip().lower() for c in preview_df.columns]
             validation_errors = []
+
             if geog_col_label.strip().lower() not in columns_lower:
                 validation_errors.append(f"Column '{geog_col_label}' not found in your Excel file. Available columns: {list(preview_df.columns)}")
+            else:
+                actual_geog = next(c for c in preview_df.columns if c.strip().lower() == geog_col_label.strip().lower())
+                if actual_geog != geog_col_label.strip():
+                    validation_errors.append(f"Column name case mismatch: you entered '{geog_col_label.strip()}' but the column is '{actual_geog}'. Please fix the case and try again.")
+
             if value_col_label.strip().lower() not in columns_lower:
                 validation_errors.append(f"Column '{value_col_label}' not found in your Excel file. Available columns: {list(preview_df.columns)}")
+            else:
+                actual_value = next(c for c in preview_df.columns if c.strip().lower() == value_col_label.strip().lower())
+                if actual_value != value_col_label.strip():
+                    validation_errors.append(f"Column name case mismatch: you entered '{value_col_label.strip()}' but the column is '{actual_value}'. Please fix the case and try again.")
+
             if validation_errors:
                 st.session_state.processing = False
                 st.session_state.map_error = validation_errors
+                st.rerun()
         except Exception as e:
             error = e
             if str(e) == f"Worksheet named '{sheet_name_final}' not found":
-                error = "Invalid sheet name inputted. Make sure the sheet name matches the excel file."
+                error = "Invalid sheet name inputted. Make sure the inputted sheet name matches the sheet name in the excel file exactly (Case Sensitive)"
             st.session_state.processing = False
             st.session_state.map_error = [f"Could not read Excel file: {error}"]
-
-            
-
-    if st.session_state.map_error:
-        for err in st.session_state.map_error:
-            st.error(err)
-        st.session_state.map_error = None
-        st.stop()
+            st.rerun()
 
     # Reset buffer position after validation read
     excel_file.seek(0)
@@ -244,34 +255,25 @@ if generate_button:
     with st.spinner("Generating Map. Do not close or refresh the page..."):
         status_container = st.empty()
         while elapsed < timeout:
-            # Update status text
             status_container.text(f"{elapsed}s elapsed")
 
             if check_s3_file_exists(error_s3_key):
                 error_body = json.loads(download_s3_file_to_bytes(error_s3_key).decode("utf-8"))
                 status_container.empty()
                 st.session_state.processing = False
-                st.session_state.map_error = [error_body["error"]]  
-                break
-                
+                st.session_state.map_error = [error_body["error"]]
+                st.rerun()
 
-            # Check if results exist
             if check_s3_file_exists(result_s3_key) and check_s3_file_exists(unassigned_s3_key):
                 break
 
             time.sleep(poll_interval)
             elapsed += poll_interval
         else:
-            # Timeout
-            st.session_state.processing = False
             status_container.empty()
+            st.session_state.processing = False
             st.session_state.map_error = ["Timed out waiting for Lambda to generate the map."]
-            st.stop()
-
-    if st.session_state.get("map_error"):
-        st.error(st.session_state.map_error)
-        st.session_state.map_error = None
-        st.stop()
+            st.rerun()
 
     # Success — clear the status message
     status_container.empty()
@@ -283,7 +285,6 @@ if generate_button:
     # Resize the png
     png_bytes = squish_width_preserve_legend(png_bytes, new_width=5600)
 
-
     st.session_state.png_bytes = png_bytes
     st.session_state.csv_bytes = csv_bytes
 
@@ -294,7 +295,6 @@ if generate_button:
 if st.session_state.png_bytes is not None:
     st.image(st.session_state.png_bytes)
 
-    # Download button
     st.download_button(
         label="Download Map as PNG",
         data=st.session_state.png_bytes,
@@ -304,6 +304,6 @@ if st.session_state.png_bytes is not None:
 
 if st.session_state.csv_bytes is not None:
     with st.expander(label="View Unassigned ZIP Codes"):
-        st.write("The following zipcodes were missing from uploaded excel file. If the Auto-Assign checkbox was seleced, the asissged values are shown below.")
+        st.write("The following zipcodes were missing from uploaded excel file. If the Auto-Assign checkbox was selected, the assigned values are shown below.")
         unassigned_df = pd.read_csv(BytesIO(st.session_state.csv_bytes))
         st.dataframe(unassigned_df)
