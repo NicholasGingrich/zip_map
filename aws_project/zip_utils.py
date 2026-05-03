@@ -87,30 +87,30 @@ def normalize_col(df, col_param):
 def build_value_adjacency(gdf, value_col):
     """
     Returns a set of frozensets {val1, val2} for all pairs of distinct values
-    whose regions share a boundary. Dissolves by value first for performance.
+    whose regions share a boundary.
     """
     import geopandas as gpd
 
-    assigned = gdf[gdf[value_col].notna()].copy()
+    assigned = gdf[gdf[value_col].notna()].copy().reset_index(drop=True)
     if assigned.empty:
         return set()
 
-    # Dissolve to one geometry per group — turns a 33k-row sjoin into an N-row sjoin
-    dissolved = assigned[[value_col, "geometry"]].dissolve(by=value_col).reset_index()
-
     joined = gpd.sjoin(
-        dissolved[[value_col, "geometry"]],
-        dissolved[[value_col, "geometry"]],
+        assigned[[value_col, "geometry"]],
+        assigned[[value_col, "geometry"]],
         how="inner",
         predicate="touches",
     )
 
-    # Both sides have value_col, so geopandas suffixes both with _left / _right
-    left_col = value_col + "_left"
     right_col = value_col + "_right"
+    adjacency = set()
+    for _, row in joined.iterrows():
+        v1, v2 = row[value_col], row[right_col]
+        if v1 != v2:
+            adjacency.add(frozenset([v1, v2]))
 
-    pairs = joined[joined[left_col] != joined[right_col]][[left_col, right_col]].values
-    return {frozenset(pair) for pair in pairs}
+    return adjacency
+
 
 def greedy_color_assignment(unique_vals, adjacency, num_colors):
     """
