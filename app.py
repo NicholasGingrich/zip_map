@@ -26,8 +26,12 @@ if "selected_colors" not in st.session_state:
 if "map_error" not in st.session_state:
     st.session_state.map_error = None
 
+if "trigger_generate" not in st.session_state:
+    st.session_state.trigger_generate = False
+
 def set_processing():
     st.session_state.processing = True
+    st.session_state.trigger_generate = True
     st.session_state.map_error = None  # Clear previous errors on new attempt
 
 # -----------------------------
@@ -183,7 +187,8 @@ def squish_width_preserve_legend(png_bytes, new_width=1200, legend_pct=0.125):
 # -----------------------------
 # Main Logic
 # -----------------------------
-if generate_button:
+if st.session_state.trigger_generate:
+    st.session_state.trigger_generate = False
     if not excel_file:
         st.session_state.processing = False
         st.session_state.map_error = ["Please upload an Excel file."]
